@@ -199,23 +199,48 @@ public class CollectionSerializers {
       return value;
     }
 
-    @SuppressWarnings("unchecked")
     @Override
-    public T newCollection(ReadContext readContext) {
+    public Collection newCollection(ReadContext readContext) {
       assert !config.isXlang();
       MemoryBuffer buffer = readContext.getBuffer();
       int numElements = buffer.readVarUint32Small7();
       setNumElements(numElements);
       Comparator comparator = (Comparator) readContext.readRef();
+      if (constructorFactory.needsStateTransfer(comparator)) {
+        T target = Platform.newInstance(type);
+        readContext.reference(target);
+        return ContainerTransfer.wrapCollection(
+            target,
+            constructorFactory.newRootCollection(comparator),
+            constructorFactory.getRootType());
+      }
       T collection = constructorFactory.newCollection(comparator);
       readContext.reference(collection);
       return collection;
     }
 
     @Override
-    public Collection newCollection(CopyContext copyContext, Collection originCollection) {
-      Comparator comparator = copyContext.copyObject(((SortedSet) originCollection).comparator());
-      return constructorFactory.newCollection(comparator);
+    public T onCollectionRead(Collection collection) {
+      return ContainerTransfer.finishCollection(collection);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originCollection) {
+      Comparator originComparator = ((SortedSet) originCollection).comparator();
+      if (!constructorFactory.needsStateTransfer(originComparator)) {
+        Comparator comparator = copyContext.copyObject(originComparator);
+        T newCollection = constructorFactory.newCollection(comparator);
+        copyContext.reference(originCollection, newCollection);
+        copyElements(copyContext, originCollection, newCollection);
+        return newCollection;
+      }
+      T target = Platform.newInstance(type);
+      copyContext.reference(originCollection, target);
+      Comparator comparator = copyContext.copyObject(originComparator);
+      Collection rootCollection = constructorFactory.newRootCollection(comparator);
+      copyElements(copyContext, originCollection, rootCollection);
+      ContainerTransfer.transferRootState(constructorFactory.getRootType(), rootCollection, target);
+      return target;
     }
   }
 
@@ -715,15 +740,48 @@ public class CollectionSerializers {
     }
 
     @Override
-    public PriorityQueue newCollection(ReadContext readContext) {
+    public Collection newCollection(ReadContext readContext) {
       assert !config.isXlang();
       MemoryBuffer buffer = readContext.getBuffer();
       int numElements = buffer.readVarUint32Small7();
       setNumElements(numElements);
       Comparator comparator = (Comparator) readContext.readRef();
+      if (constructorFactory.needsStateTransfer(comparator, numElements)) {
+        PriorityQueue target = Platform.newInstance(type);
+        readContext.reference(target);
+        return ContainerTransfer.wrapCollection(
+            target,
+            constructorFactory.newRootCollection(comparator, numElements),
+            constructorFactory.getRootType());
+      }
       PriorityQueue queue = constructorFactory.newCollection(comparator, numElements);
       readContext.reference(queue);
       return queue;
+    }
+
+    @Override
+    public PriorityQueue onCollectionRead(Collection collection) {
+      return ContainerTransfer.finishCollection(collection);
+    }
+
+    @Override
+    public PriorityQueue copy(CopyContext copyContext, PriorityQueue originCollection) {
+      Comparator originComparator = originCollection.comparator();
+      if (!constructorFactory.needsStateTransfer(originComparator, originCollection.size())) {
+        Comparator comparator = copyContext.copyObject(originComparator);
+        PriorityQueue target = constructorFactory.newCollection(comparator, originCollection.size());
+        copyContext.reference(originCollection, target);
+        copyElements(copyContext, originCollection, target);
+        return target;
+      }
+      PriorityQueue target = Platform.newInstance(type);
+      copyContext.reference(originCollection, target);
+      Comparator comparator = copyContext.copyObject(originComparator);
+      Collection rootCollection =
+          constructorFactory.newRootCollection(comparator, originCollection.size());
+      copyElements(copyContext, originCollection, rootCollection);
+      ContainerTransfer.transferRootState(constructorFactory.getRootType(), rootCollection, target);
+      return target;
     }
   }
 

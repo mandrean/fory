@@ -145,15 +145,39 @@ public class MapSerializers {
       MemoryBuffer buffer = readContext.getBuffer();
       setNumElements(buffer.readVarUint32Small7());
       Comparator comparator = (Comparator) readContext.readRef();
+      if (constructorFactory.needsStateTransfer(comparator)) {
+        T target = Platform.newInstance(type);
+        readContext.reference(target);
+        return ContainerTransfer.wrapMap(
+            target, constructorFactory.newRootMap(comparator), constructorFactory.getRootType());
+      }
       T map = constructorFactory.newMap(comparator);
       readContext.reference(map);
       return map;
     }
 
     @Override
-    public Map newMap(CopyContext copyContext, Map originMap) {
-      Comparator comparator = copyContext.copyObject(((SortedMap) originMap).comparator());
-      return constructorFactory.newMap(comparator);
+    public T onMapRead(Map map) {
+      return ContainerTransfer.finishMap(map);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originMap) {
+      Comparator originComparator = ((SortedMap) originMap).comparator();
+      if (!constructorFactory.needsStateTransfer(originComparator)) {
+        Comparator comparator = copyContext.copyObject(originComparator);
+        T newMap = constructorFactory.newMap(comparator);
+        copyContext.reference(originMap, newMap);
+        copyEntry(copyContext, originMap, newMap);
+        return newMap;
+      }
+      T target = Platform.newInstance(type);
+      copyContext.reference(originMap, target);
+      Comparator comparator = copyContext.copyObject(originComparator);
+      Map rootMap = constructorFactory.newRootMap(comparator);
+      copyEntry(copyContext, originMap, rootMap);
+      ContainerTransfer.transferRootState(constructorFactory.getRootType(), rootMap, target);
+      return target;
     }
   }
 

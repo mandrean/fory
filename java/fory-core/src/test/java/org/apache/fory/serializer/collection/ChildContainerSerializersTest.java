@@ -531,6 +531,20 @@ public class ChildContainerSerializersTest extends ForyTestBase {
     }
   }
 
+  private static <T extends Collection<?>> T requireNonEmpty(T values) {
+    if (values.isEmpty()) {
+      throw new IllegalArgumentException("values must not be empty");
+    }
+    return values;
+  }
+
+  private static <T extends Map<?, ?>> T requireNonEmpty(T values) {
+    if (values.isEmpty()) {
+      throw new IllegalArgumentException("values must not be empty");
+    }
+    return values;
+  }
+
   private abstract static class StatefulTreeSet extends TreeSet<String> implements StateCarrier {
     private String state;
 
@@ -571,7 +585,7 @@ public class ChildContainerSerializersTest extends ForyTestBase {
 
   public static class ChildTreeSetCollectionCtor extends StatefulTreeSet {
     public ChildTreeSetCollectionCtor(Collection<? extends String> values) {
-      super(values);
+      super(requireNonEmpty(values));
     }
   }
 
@@ -624,7 +638,7 @@ public class ChildContainerSerializersTest extends ForyTestBase {
   public static class ChildConcurrentSkipListSetCollectionCtor
       extends StatefulConcurrentSkipListSet {
     public ChildConcurrentSkipListSetCollectionCtor(Collection<? extends String> values) {
-      super(values);
+      super(requireNonEmpty(values));
     }
   }
 
@@ -676,7 +690,7 @@ public class ChildContainerSerializersTest extends ForyTestBase {
 
   public static class ChildTreeMapMapCtor extends StatefulTreeMap {
     public ChildTreeMapMapCtor(Map<? extends String, ? extends String> values) {
-      super(values);
+      super(requireNonEmpty(values));
     }
   }
 
@@ -728,7 +742,7 @@ public class ChildContainerSerializersTest extends ForyTestBase {
 
   public static class ChildConcurrentSkipListMapMapCtor extends StatefulConcurrentSkipListMap {
     public ChildConcurrentSkipListMapMapCtor(Map<? extends String, ? extends String> values) {
-      super(values);
+      super(requireNonEmpty(values));
     }
   }
 
@@ -792,7 +806,7 @@ public class ChildContainerSerializersTest extends ForyTestBase {
 
   public static class ChildPriorityQueueCollectionCtor extends StatefulPriorityQueue {
     public ChildPriorityQueueCollectionCtor(Collection<? extends String> values) {
-      super(values);
+      super(requireNonEmpty(values));
     }
   }
 
@@ -1054,6 +1068,54 @@ public class ChildContainerSerializersTest extends ForyTestBase {
     queueCapacityComparator.addAll(ImmutableList.of("b", "a", "c"));
     queueCapacityComparator.setState("queue-capacity-comparator");
     assertPriorityQueueAutoPath(fory, queueCapacityComparator, true);
+  }
+
+  @Test
+  public void testAutoSourceConstructorSubclassesWithEmptyState() {
+    Fory fory =
+        builder()
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .withCodegen(false)
+            .withAsyncCompilation(false)
+            .build();
+
+    ChildTreeSetCollectionCtor treeSet = new ChildTreeSetCollectionCtor(ImmutableList.of("b", "a"));
+    treeSet.clear();
+    treeSet.setState("tree-empty-after-clear");
+    assertSortedSetAutoPath(
+        fory, treeSet, ChildContainerSerializers.ChildSortedSetSerializer.class, false);
+
+    ChildConcurrentSkipListSetCollectionCtor skipListSet =
+        new ChildConcurrentSkipListSetCollectionCtor(ImmutableList.of("b", "a"));
+    skipListSet.clear();
+    skipListSet.setState("skip-list-empty-after-clear");
+    assertSortedSetAutoPath(
+        fory,
+        skipListSet,
+        ChildContainerSerializers.ChildConcurrentSkipListSetSerializer.class,
+        false);
+
+    ChildTreeMapMapCtor treeMap = new ChildTreeMapMapCtor(ImmutableMap.of("b", "B", "a", "A"));
+    treeMap.clear();
+    treeMap.setState("tree-map-empty-after-clear");
+    assertSortedMapAutoPath(
+        fory, treeMap, ChildContainerSerializers.ChildSortedMapSerializer.class, false);
+
+    ChildConcurrentSkipListMapMapCtor skipListMap =
+        new ChildConcurrentSkipListMapMapCtor(ImmutableMap.of("b", "B", "a", "A"));
+    skipListMap.clear();
+    skipListMap.setState("skip-list-map-empty-after-clear");
+    assertSortedMapAutoPath(
+        fory,
+        skipListMap,
+        ChildContainerSerializers.ChildConcurrentSkipListMapSerializer.class,
+        false);
+
+    ChildPriorityQueueCollectionCtor queue =
+        new ChildPriorityQueueCollectionCtor(ImmutableList.of("b", "a", "c"));
+    queue.clear();
+    queue.setState("queue-empty-after-clear");
+    assertPriorityQueueAutoPath(fory, queue, false);
   }
 
   @Test

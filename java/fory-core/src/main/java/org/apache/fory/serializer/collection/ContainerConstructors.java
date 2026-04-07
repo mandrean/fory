@@ -21,7 +21,6 @@ package org.apache.fory.serializer.collection;
 
 import java.lang.invoke.MethodHandle;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.PriorityQueue;
@@ -32,6 +31,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ConcurrentSkipListSet;
 import org.apache.fory.reflect.ReflectionUtils;
+import org.apache.fory.util.Preconditions;
 
 @SuppressWarnings({"rawtypes", "unchecked"})
 final class ContainerConstructors {
@@ -74,6 +74,19 @@ final class ContainerConstructors {
   }
 
   static final class SortedSetFactory<T extends Collection> {
+    private enum Mode {
+      DIRECT_COMPARATOR(false),
+      ROOT_TRANSFER_SORTED_SET(true),
+      DIRECT_NO_ARG(false),
+      ROOT_TRANSFER_COLLECTION(true);
+
+      private final boolean rootTransfer;
+
+      Mode(boolean rootTransfer) {
+        this.rootTransfer = rootTransfer;
+      }
+    }
+
     private final Class<T> type;
     private final Class<? extends SortedSet> rootType;
     private final MethodHandle comparatorConstructor;
@@ -97,27 +110,50 @@ final class ContainerConstructors {
       }
     }
 
+    boolean needsStateTransfer(Comparator comparator) {
+      return resolveMode(comparator).rootTransfer;
+    }
+
     T newCollection(Comparator comparator) {
+      Mode mode = resolveMode(comparator);
+      Preconditions.checkArgument(!mode.rootTransfer);
       try {
-        if (comparatorConstructor != null) {
+        if (mode == Mode.DIRECT_COMPARATOR) {
           return (T) comparatorConstructor.invoke(comparator);
         }
-        if (sortedSetConstructor != null) {
-          return (T) sortedSetConstructor.invoke(emptySortedSet(comparator));
-        }
-        if (comparator != null) {
-          throw unsupported(
-              type, "a comparator-preserving constructor among (Comparator) or (SortedSet)");
-        }
-        if (noArgConstructor != null) {
-          return (T) noArgConstructor.invoke();
-        }
-        return (T) collectionConstructor.invoke(Collections.emptyList());
+        return (T) noArgConstructor.invoke();
       } catch (RuntimeException e) {
         throw e;
       } catch (Throwable e) {
         throw new RuntimeException(e);
       }
+    }
+
+    SortedSet newRootCollection(Comparator comparator) {
+      Mode mode = resolveMode(comparator);
+      Preconditions.checkArgument(mode.rootTransfer);
+      return emptySortedSet(comparator);
+    }
+
+    Class<? extends SortedSet> getRootType() {
+      return rootType;
+    }
+
+    private Mode resolveMode(Comparator comparator) {
+      if (comparatorConstructor != null) {
+        return Mode.DIRECT_COMPARATOR;
+      }
+      if (sortedSetConstructor != null) {
+        return Mode.ROOT_TRANSFER_SORTED_SET;
+      }
+      if (comparator != null) {
+        throw unsupported(
+            type, "a comparator-preserving constructor among (Comparator) or (SortedSet)");
+      }
+      if (noArgConstructor != null) {
+        return Mode.DIRECT_NO_ARG;
+      }
+      return Mode.ROOT_TRANSFER_COLLECTION;
     }
 
     private SortedSet emptySortedSet(Comparator comparator) {
@@ -129,6 +165,19 @@ final class ContainerConstructors {
   }
 
   static final class SortedMapFactory<T extends Map> {
+    private enum Mode {
+      DIRECT_COMPARATOR(false),
+      ROOT_TRANSFER_SORTED_MAP(true),
+      DIRECT_NO_ARG(false),
+      ROOT_TRANSFER_MAP(true);
+
+      private final boolean rootTransfer;
+
+      Mode(boolean rootTransfer) {
+        this.rootTransfer = rootTransfer;
+      }
+    }
+
     private final Class<T> type;
     private final Class<? extends SortedMap> rootType;
     private final MethodHandle comparatorConstructor;
@@ -152,27 +201,50 @@ final class ContainerConstructors {
       }
     }
 
+    boolean needsStateTransfer(Comparator comparator) {
+      return resolveMode(comparator).rootTransfer;
+    }
+
     T newMap(Comparator comparator) {
+      Mode mode = resolveMode(comparator);
+      Preconditions.checkArgument(!mode.rootTransfer);
       try {
-        if (comparatorConstructor != null) {
+        if (mode == Mode.DIRECT_COMPARATOR) {
           return (T) comparatorConstructor.invoke(comparator);
         }
-        if (sortedMapConstructor != null) {
-          return (T) sortedMapConstructor.invoke(emptySortedMap(comparator));
-        }
-        if (comparator != null) {
-          throw unsupported(
-              type, "a comparator-preserving constructor among (Comparator) or (SortedMap)");
-        }
-        if (noArgConstructor != null) {
-          return (T) noArgConstructor.invoke();
-        }
-        return (T) mapConstructor.invoke(Collections.emptyMap());
+        return (T) noArgConstructor.invoke();
       } catch (RuntimeException e) {
         throw e;
       } catch (Throwable e) {
         throw new RuntimeException(e);
       }
+    }
+
+    SortedMap newRootMap(Comparator comparator) {
+      Mode mode = resolveMode(comparator);
+      Preconditions.checkArgument(mode.rootTransfer);
+      return emptySortedMap(comparator);
+    }
+
+    Class<? extends SortedMap> getRootType() {
+      return rootType;
+    }
+
+    private Mode resolveMode(Comparator comparator) {
+      if (comparatorConstructor != null) {
+        return Mode.DIRECT_COMPARATOR;
+      }
+      if (sortedMapConstructor != null) {
+        return Mode.ROOT_TRANSFER_SORTED_MAP;
+      }
+      if (comparator != null) {
+        throw unsupported(
+            type, "a comparator-preserving constructor among (Comparator) or (SortedMap)");
+      }
+      if (noArgConstructor != null) {
+        return Mode.DIRECT_NO_ARG;
+      }
+      return Mode.ROOT_TRANSFER_MAP;
     }
 
     private SortedMap emptySortedMap(Comparator comparator) {
@@ -184,6 +256,22 @@ final class ContainerConstructors {
   }
 
   static final class PriorityQueueFactory<T extends PriorityQueue> {
+    private enum Mode {
+      DIRECT_CAPACITY_COMPARATOR(false),
+      DIRECT_COMPARATOR(false),
+      ROOT_TRANSFER_PRIORITY_QUEUE(true),
+      ROOT_TRANSFER_SORTED_SET(true),
+      DIRECT_NO_ARG(false),
+      DIRECT_CAPACITY(false),
+      ROOT_TRANSFER_COLLECTION(true);
+
+      private final boolean rootTransfer;
+
+      Mode(boolean rootTransfer) {
+        this.rootTransfer = rootTransfer;
+      }
+    }
+
     private final Class<T> type;
     private final MethodHandle comparatorConstructor;
     private final MethodHandle capacityComparatorConstructor;
@@ -216,40 +304,68 @@ final class ContainerConstructors {
       }
     }
 
+    boolean needsStateTransfer(Comparator comparator, int sizeHint) {
+      return resolveMode(comparator, sizeHint).rootTransfer;
+    }
+
     T newCollection(Comparator comparator, int sizeHint) {
       int initialCapacity = Math.max(1, sizeHint);
+      Mode mode = resolveMode(comparator, sizeHint);
+      Preconditions.checkArgument(!mode.rootTransfer);
       try {
-        if (capacityComparatorConstructor != null) {
+        if (mode == Mode.DIRECT_CAPACITY_COMPARATOR) {
           return (T) capacityComparatorConstructor.invoke(initialCapacity, comparator);
         }
-        if (comparatorConstructor != null) {
+        if (mode == Mode.DIRECT_COMPARATOR) {
           return (T) comparatorConstructor.invoke(comparator);
         }
-        if (priorityQueueConstructor != null) {
-          return (T)
-              priorityQueueConstructor.invoke(new PriorityQueue(initialCapacity, comparator));
-        }
-        if (sortedSetConstructor != null) {
-          return (T) sortedSetConstructor.invoke(new TreeSet(comparator));
-        }
-        if (comparator != null) {
-          throw unsupported(
-              type,
-              "a comparator-preserving constructor among (Comparator), (int, Comparator),"
-                  + " (PriorityQueue), or (SortedSet)");
-        }
-        if (noArgConstructor != null) {
+        if (mode == Mode.DIRECT_NO_ARG) {
           return (T) noArgConstructor.invoke();
         }
-        if (capacityConstructor != null) {
-          return (T) capacityConstructor.invoke(initialCapacity);
-        }
-        return (T) collectionConstructor.invoke(Collections.emptyList());
+        return (T) capacityConstructor.invoke(initialCapacity);
       } catch (RuntimeException e) {
         throw e;
       } catch (Throwable e) {
         throw new RuntimeException(e);
       }
+    }
+
+    PriorityQueue newRootCollection(Comparator comparator, int sizeHint) {
+      Mode mode = resolveMode(comparator, sizeHint);
+      Preconditions.checkArgument(mode.rootTransfer);
+      return new PriorityQueue(Math.max(1, sizeHint), comparator);
+    }
+
+    Class<? extends PriorityQueue> getRootType() {
+      return PriorityQueue.class;
+    }
+
+    private Mode resolveMode(Comparator comparator, int sizeHint) {
+      if (capacityComparatorConstructor != null) {
+        return Mode.DIRECT_CAPACITY_COMPARATOR;
+      }
+      if (comparatorConstructor != null) {
+        return Mode.DIRECT_COMPARATOR;
+      }
+      if (priorityQueueConstructor != null) {
+        return Mode.ROOT_TRANSFER_PRIORITY_QUEUE;
+      }
+      if (sortedSetConstructor != null) {
+        return Mode.ROOT_TRANSFER_SORTED_SET;
+      }
+      if (comparator != null) {
+        throw unsupported(
+            type,
+            "a comparator-preserving constructor among (Comparator), (int, Comparator),"
+                + " (PriorityQueue), or (SortedSet)");
+      }
+      if (noArgConstructor != null) {
+        return Mode.DIRECT_NO_ARG;
+      }
+      if (capacityConstructor != null) {
+        return Mode.DIRECT_CAPACITY;
+      }
+      return Mode.ROOT_TRANSFER_COLLECTION;
     }
   }
 
