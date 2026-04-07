@@ -49,11 +49,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.PriorityQueue;
 import java.util.Set;
+import java.util.SortedMap;
 import java.util.SortedSet;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.Vector;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CopyOnWriteArraySet;
@@ -67,9 +70,11 @@ import lombok.EqualsAndHashCode;
 import org.apache.fory.Fory;
 import org.apache.fory.ForyTestBase;
 import org.apache.fory.config.Language;
+import org.apache.fory.context.CopyContext;
 import org.apache.fory.context.ReadContext;
 import org.apache.fory.memory.MemoryBuffer;
 import org.apache.fory.memory.MemoryUtils;
+import org.apache.fory.memory.Platform;
 import org.apache.fory.reflect.TypeRef;
 import org.apache.fory.resolver.TypeResolver;
 import org.apache.fory.serializer.collection.CollectionSerializers.JDKCompatibleCollectionSerializer;
@@ -84,6 +89,17 @@ public class CollectionSerializersTest extends ForyTestBase {
   private static final List<String> SORTED_COLLECTION_INPUT = ImmutableList.of("bbb", "a", "cc");
   private static final List<String> NATURAL_SORT_ORDER = ImmutableList.of("a", "bbb", "cc");
   private static final List<String> LENGTH_SORT_ORDER = ImmutableList.of("a", "cc", "bbb");
+  private static final long SET_FROM_MAP_MAP_FIELD_OFFSET;
+
+  static {
+    try {
+      SET_FROM_MAP_MAP_FIELD_OFFSET =
+          Platform.objectFieldOffset(
+              Class.forName("java.util.Collections$SetFromMap").getDeclaredField("m"));
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
 
   private static final class LengthThenNaturalComparator
       implements Comparator<String>, Serializable {
@@ -99,6 +115,11 @@ public class CollectionSerializersTest extends ForyTestBase {
       throw new IllegalArgumentException("values must not be empty");
     }
     return values;
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Boolean> getBackingMap(Set<String> set) {
+    return (Map<String, Boolean>) Platform.getObject(set, SET_FROM_MAP_MAP_FIELD_OFFSET);
   }
 
   private static final class SortedSetConstructorCase {
@@ -440,6 +461,12 @@ public class CollectionSerializersTest extends ForyTestBase {
   public static class ChildPriorityQueueWithCollectionConstructor extends PriorityQueue<String> {
     public ChildPriorityQueueWithCollectionConstructor(Collection<? extends String> values) {
       super(requireNonEmpty(values));
+    }
+  }
+
+  public static class ChildTreeMapWithComparator extends TreeMap<String, Boolean> {
+    public ChildTreeMapWithComparator(Comparator<? super String> comparator) {
+      super(comparator);
     }
   }
 
@@ -1108,6 +1135,13 @@ public class CollectionSerializersTest extends ForyTestBase {
     Set<String> set;
   }
 
+  @Data
+  @AllArgsConstructor
+  public static class SetAndBackingMapStruct {
+    Set<String> set;
+    Map<String, Boolean> map;
+  }
+
   @Test(dataProvider = "javaFory")
   public void testSetFromMap(Fory fory) {
     Set<String> set = Collections.newSetFromMap(Maps.newConcurrentMap());
@@ -1139,6 +1173,67 @@ public class CollectionSerializersTest extends ForyTestBase {
     set.add("b");
     set.add(Cyclic.create(true));
     copyCheck(fory, set);
+  }
+
+  private static void assertSortedSetFromMapCopy(
+      SetAndBackingMapStruct copy, Class<? extends SortedMap> expectedMapType) {
+    Map<String, Boolean> backingMap = getBackingMap(copy.getSet());
+    assertSame(backingMap, copy.getMap());
+    assertEquals(copy.getMap().getClass(), expectedMapType);
+    Assert.assertTrue(copy.getMap() instanceof SortedMap);
+    SortedMap<String, Boolean> sortedMap = (SortedMap<String, Boolean>) copy.getMap();
+    assertEquals(sortedMap.comparator().getClass(), LengthThenNaturalComparator.class);
+    assertEquals(new ArrayList<>(copy.getSet()), LENGTH_SORT_ORDER);
+    assertEquals(new ArrayList<>(sortedMap.keySet()), LENGTH_SORT_ORDER);
+  }
+
+  @Test(dataProvider = "foryCopyConfig")
+  public void testSetFromMapCopyWithSortedBackingMaps(Fory fory) {
+    TreeMap<String, Boolean> treeMap = new TreeMap<>(new LengthThenNaturalComparator());
+    Set<String> treeSet = Collections.newSetFromMap(treeMap);
+    treeSet.addAll(SORTED_COLLECTION_INPUT);
+    assertSortedSetFromMapCopy(
+        fory.copy(new SetAndBackingMapStruct(treeSet, treeMap)), TreeMap.class);
+
+    ConcurrentSkipListMap<String, Boolean> skipListMap =
+        new ConcurrentSkipListMap<>(new LengthThenNaturalComparator());
+    Set<String> skipListSet = Collections.newSetFromMap(skipListMap);
+    skipListSet.addAll(SORTED_COLLECTION_INPUT);
+    assertSortedSetFromMapCopy(
+        fory.copy(new SetAndBackingMapStruct(skipListSet, skipListMap)),
+        ConcurrentSkipListMap.class);
+  }
+
+  @Test(dataProvider = "foryCopyConfig")
+  public void testSetFromMapCopyWithChildSortedBackingMap(Fory fory) {
+    Assert.assertEquals(
+        fory.getTypeResolver().getSerializerClass(ChildTreeMapWithComparator.class),
+        ChildContainerSerializers.ChildSortedMapSerializer.class);
+    ChildTreeMapWithComparator childMap =
+        new ChildTreeMapWithComparator(new LengthThenNaturalComparator());
+    Set<String> set = Collections.newSetFromMap(childMap);
+    set.addAll(SORTED_COLLECTION_INPUT);
+
+    assertSortedSetFromMapCopy(
+        fory.copy(new SetAndBackingMapStruct(set, childMap)), ChildTreeMapWithComparator.class);
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test(dataProvider = "foryCopyConfig")
+  public void testPriorityQueueCopyHookRejectsRootTransferMode(Fory fory) {
+    SortedSet<String> source = new TreeSet<>(new LengthThenNaturalComparator());
+    source.addAll(SORTED_COLLECTION_INPUT);
+    ChildPriorityQueueWithCollectionConstructor queue =
+        new ChildPriorityQueueWithCollectionConstructor(source);
+    CollectionSerializers.PriorityQueueSerializer serializer =
+        new CollectionSerializers.PriorityQueueSerializer(
+            fory.getTypeResolver(), (Class) ChildPriorityQueueWithCollectionConstructor.class);
+    CopyContext copyContext = new CopyContext(fory.getTypeResolver(), true);
+
+    IllegalStateException exception =
+        Assert.expectThrows(
+            IllegalStateException.class, () -> serializer.newCollection(copyContext, queue));
+    Assert.assertTrue(exception.getMessage().contains("copy(...)"));
   }
 
   @Test(dataProvider = "javaFory")
