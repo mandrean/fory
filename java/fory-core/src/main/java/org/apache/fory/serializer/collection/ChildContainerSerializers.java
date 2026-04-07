@@ -21,7 +21,6 @@ package org.apache.fory.serializer.collection;
 
 import static org.apache.fory.collection.Collections.ofHashSet;
 
-import java.lang.invoke.MethodHandle;
 import java.lang.reflect.Field;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -45,6 +44,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ConcurrentSkipListSet;
 import org.apache.fory.builder.LayerMarkerClassGenerator;
+import org.apache.fory.collection.CollectionSnapshot;
+import org.apache.fory.collection.MapSnapshot;
 import org.apache.fory.context.CopyContext;
 import org.apache.fory.context.MetaReadContext;
 import org.apache.fory.context.ReadContext;
@@ -75,72 +76,91 @@ public class ChildContainerSerializers {
 
   public static Class<? extends Serializer> getCollectionSerializerClass(Class<?> cls) {
     if (ChildCollectionSerializer.superClasses.contains(cls)
-        || ChildSortedSetSerializer.superClasses.contains(cls)
-        || ChildPriorityQueueSerializer.superClasses.contains(cls)) {
+        || cls == TreeSet.class
+        || cls == ConcurrentSkipListSet.class
+        || cls == PriorityQueue.class) {
       return null;
     }
     if (ClassResolver.useReplaceResolveSerializer(cls)) {
       return null;
     }
-    Class<?> childClass = cls;
-    while (cls != Object.class) {
-      if (ChildCollectionSerializer.superClasses.contains(cls)) {
-        if (!ReflectionUtils.hasNoArgConstructor(childClass)) {
+    Class<?> type = cls;
+    while (type != Object.class) {
+      if (ChildCollectionSerializer.superClasses.contains(type)) {
+        // Collection/Map must have default constructor to be invoked by fory, otherwise created
+        // object can't be used to adding elements.
+        // For example: `new ArrayList<Integer> { add(1);}`, without default constructor, created
+        // list will have elementData as null, adding elements will raise NPE.
+        if (!ReflectionUtils.hasNoArgConstructor(cls)) {
           return null;
         }
-        if (cls == ArrayList.class) {
+        if (type == ArrayList.class) {
           return ChildArrayListSerializer.class;
-        } else {
-          return ChildCollectionSerializer.class;
         }
-      } else if (ChildSortedSetSerializer.superClasses.contains(cls)) {
-        if (ChildSortedSetSerializer.supports(childClass)) {
-          return ChildSortedSetSerializer.class;
-        }
-        return null;
-      } else if (ChildPriorityQueueSerializer.superClasses.contains(cls)) {
-        if (ChildPriorityQueueSerializer.supports(childClass)) {
-          return ChildPriorityQueueSerializer.class;
-        }
-        return null;
-      } else {
-        if (JavaSerializer.getReadRefMethod(cls, false) != null
-            || JavaSerializer.getWriteObjectMethod(cls, false) != null) {
-          return null;
-        }
+        return ChildCollectionSerializer.class;
       }
-      cls = cls.getSuperclass();
+      if (type == TreeSet.class) {
+        return ContainerConstructors.sortedSetFactory((Class) cls, TreeSet.class).isSupported()
+            ? ChildSortedSetSerializer.class
+            : null;
+      }
+      if (type == ConcurrentSkipListSet.class) {
+        return ContainerConstructors.sortedSetFactory((Class) cls, ConcurrentSkipListSet.class)
+                .isSupported()
+            ? ChildConcurrentSkipListSetSerializer.class
+            : null;
+      }
+      if (type == PriorityQueue.class) {
+        return ContainerConstructors.priorityQueueFactory((Class) cls).isSupported()
+            ? ChildPriorityQueueSerializer.class
+            : null;
+      }
+      if (JavaSerializer.getReadRefMethod(type, false) != null
+          || JavaSerializer.getWriteObjectMethod(type, false) != null) {
+        return null;
+      }
+      type = type.getSuperclass();
     }
     return null;
   }
 
   public static Class<? extends Serializer> getMapSerializerClass(Class<?> cls) {
     if (ChildMapSerializer.superClasses.contains(cls)
-        || ChildSortedMapSerializer.superClasses.contains(cls)) {
+        || cls == TreeMap.class
+        || cls == ConcurrentSkipListMap.class) {
       return null;
     }
     if (ClassResolver.useReplaceResolveSerializer(cls)) {
       return null;
     }
-    Class<?> childClass = cls;
-    while (cls != Object.class) {
-      if (ChildMapSerializer.superClasses.contains(cls)) {
-        if (!ReflectionUtils.hasNoArgConstructor(childClass)) {
+    Class<?> type = cls;
+    while (type != Object.class) {
+      if (ChildMapSerializer.superClasses.contains(type)) {
+        // Collection/Map must have default constructor to be invoked by fory, otherwise created
+        // object can't be used to adding elements.
+        // For example: `new ArrayList<Integer> { add(1);}`, without default constructor, created
+        // list will have elementData as null, adding elements will raise NPE.
+        if (!ReflectionUtils.hasNoArgConstructor(cls)) {
           return null;
         }
         return ChildMapSerializer.class;
-      } else if (ChildSortedMapSerializer.superClasses.contains(cls)) {
-        if (ChildSortedMapSerializer.supports(childClass)) {
-          return ChildSortedMapSerializer.class;
-        }
-        return null;
-      } else {
-        if (JavaSerializer.getReadRefMethod(cls, false) != null
-            || JavaSerializer.getWriteObjectMethod(cls, false) != null) {
-          return null;
-        }
       }
-      cls = cls.getSuperclass();
+      if (type == TreeMap.class) {
+        return ContainerConstructors.sortedMapFactory((Class) cls, TreeMap.class).isSupported()
+            ? ChildSortedMapSerializer.class
+            : null;
+      }
+      if (type == ConcurrentSkipListMap.class) {
+        return ContainerConstructors.sortedMapFactory((Class) cls, ConcurrentSkipListMap.class)
+                .isSupported()
+            ? ChildConcurrentSkipListMapSerializer.class
+            : null;
+      }
+      if (JavaSerializer.getReadRefMethod(type, false) != null
+          || JavaSerializer.getWriteObjectMethod(type, false) != null) {
+        return null;
+      }
+      type = type.getSuperclass();
     }
     return null;
   }
@@ -158,16 +178,9 @@ public class ChildContainerSerializers {
             );
     protected SerializationFieldInfo[] fieldInfos;
     protected final Serializer[] slotsSerializers;
-    protected final Set<Class<?>> slotSuperClasses;
 
     public ChildCollectionSerializer(TypeResolver typeResolver, Class<T> cls) {
-      this(typeResolver, cls, superClasses);
-    }
-
-    protected ChildCollectionSerializer(
-        TypeResolver typeResolver, Class<T> cls, Set<Class<?>> superClasses) {
       super(typeResolver, cls);
-      this.slotSuperClasses = superClasses;
       slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
     }
 
@@ -190,21 +203,12 @@ public class ChildContainerSerializers {
     @Override
     public Collection newCollection(CopyContext copyContext, Collection originCollection) {
       Collection newCollection = super.newCollection(copyContext, originCollection);
-      copyChildFields(copyContext, originCollection, newCollection);
-      return newCollection;
-    }
-
-    protected final void readChildFields(ReadContext readContext, Object collection) {
-      readAndSetFields(readContext, typeResolver, collection, slotsSerializers);
-    }
-
-    protected final void copyChildFields(
-        CopyContext copyContext, Object originCollection, Object newCollection) {
       if (fieldInfos == null) {
-        List<Field> fields = ReflectionUtils.getFieldsWithoutSuperClasses(type, slotSuperClasses);
+        List<Field> fields = ReflectionUtils.getFieldsWithoutSuperClasses(type, superClasses);
         fieldInfos = FieldGroups.buildFieldsInfo(typeResolver, fields).allFields;
       }
       AbstractObjectSerializer.copyFields(copyContext, fieldInfos, originCollection, newCollection);
+      return newCollection;
     }
   }
 
@@ -224,101 +228,202 @@ public class ChildContainerSerializers {
     }
   }
 
-  public static final class ChildSortedSetSerializer<T extends SortedSet>
-      extends ChildCollectionSerializer<T> {
-    public static final Set<Class<?>> superClasses =
-        ofHashSet(TreeSet.class, ConcurrentSkipListSet.class);
-    private final SortedSetSubclassFactory<T> subclassFactory;
+  public static class ChildSortedSetSerializer<T extends SortedSet>
+      extends CollectionSerializer<T> {
+    public static Set<Class<?>> superClasses = ofHashSet(TreeSet.class);
+    private final ContainerConstructors.SortedSetFactory<T> constructorFactory;
+    private final Serializer[] slotsSerializers;
+    private SerializationFieldInfo[] fieldInfos;
 
     public ChildSortedSetSerializer(TypeResolver typeResolver, Class<T> cls) {
-      super(typeResolver, cls, superClasses);
-      subclassFactory = new SortedSetSubclassFactory<>(cls);
-    }
-
-    static boolean supports(Class<?> cls) {
-      return SortedSetSubclassFactory.supports(cls);
+      super(typeResolver, cls, true);
+      constructorFactory = ContainerConstructors.sortedSetFactory(cls, TreeSet.class);
+      constructorFactory.checkSupported();
+      slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
     }
 
     @Override
     public Collection onCollectionWrite(WriteContext writeContext, T value) {
       MemoryBuffer buffer = writeContext.getBuffer();
       buffer.writeVarUint32Small7(value.size());
-      writeContext.writeRef(value.comparator());
-      for (Serializer slotsSerializer : slotsSerializers) {
-        slotsSerializer.write(writeContext, value);
+      if (!config.isXlang()) {
+        writeContext.writeRef(value.comparator());
       }
+      writeSlots(writeContext, value, slotsSerializers);
       return value;
     }
 
     @Override
-    public T newCollection(ReadContext readContext) {
+    public Collection newCollection(ReadContext readContext) {
+      assert !config.isXlang();
       MemoryBuffer buffer = readContext.getBuffer();
       int numElements = buffer.readVarUint32Small7();
       setNumElements(numElements);
-      int refId = readContext.lastPreservedRefId();
       Comparator comparator = (Comparator) readContext.readRef();
-      T collection = subclassFactory.newCollection(comparator);
-      readContext.setReadRef(refId, collection);
-      readChildFields(readContext, collection);
-      return collection;
+      return ContainerTransfer.readCollection(
+          type,
+          constructorFactory.newConstruction(comparator),
+          readContext::reference,
+          target -> readAndSetFields(readContext, typeResolver, target, slotsSerializers));
     }
 
     @Override
-    public Collection newCollection(CopyContext copyContext, Collection originCollection) {
-      T newCollection =
-          subclassFactory.newCollection(
-              copyContext.copyObject(((SortedSet<?>) originCollection).comparator()));
-      copyChildFields(copyContext, originCollection, newCollection);
-      return newCollection;
+    public T onCollectionRead(Collection collection) {
+      return ContainerTransfer.<T>finishCollection(collection);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originCollection) {
+      Comparator comparator = copyContext.copyObject(((SortedSet) originCollection).comparator());
+      return ContainerTransfer.<T>copyCollection(
+          type,
+          originCollection,
+          copyContext,
+          constructorFactory.newConstruction(comparator),
+          target ->
+              fieldInfos =
+                  copyFields(
+                      copyContext,
+                      typeResolver,
+                      type,
+                      superClasses,
+                      fieldInfos,
+                      originCollection,
+                      target),
+          targetCollection -> copyElements(copyContext, originCollection, targetCollection));
     }
   }
 
-  public static final class ChildPriorityQueueSerializer<T extends PriorityQueue>
-      extends ChildCollectionSerializer<T> {
-    public static final Set<Class<?>> superClasses = ofHashSet(PriorityQueue.class);
-    private final PriorityQueueSubclassFactory<T> subclassFactory;
+  public static class ChildConcurrentSkipListSetSerializer<T extends ConcurrentSkipListSet>
+      extends ConcurrentCollectionSerializer<T> {
+    public static Set<Class<?>> superClasses = ofHashSet(ConcurrentSkipListSet.class);
+    private final ContainerConstructors.SortedSetFactory<T> constructorFactory;
+    private final Serializer[] slotsSerializers;
+    private SerializationFieldInfo[] fieldInfos;
 
-    public ChildPriorityQueueSerializer(TypeResolver typeResolver, Class<T> cls) {
-      super(typeResolver, cls, superClasses);
-      subclassFactory = new PriorityQueueSubclassFactory<>(cls);
+    public ChildConcurrentSkipListSetSerializer(TypeResolver typeResolver, Class<T> cls) {
+      super(typeResolver, cls, true);
+      constructorFactory = ContainerConstructors.sortedSetFactory(cls, ConcurrentSkipListSet.class);
+      constructorFactory.checkSupported();
+      slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
     }
 
-    static boolean supports(Class<?> cls) {
-      return PriorityQueueSubclassFactory.supports(cls);
+    @Override
+    public CollectionSnapshot onCollectionWrite(WriteContext writeContext, T value) {
+      CollectionSnapshot snapshot = super.onCollectionWrite(writeContext, value);
+      if (!config.isXlang()) {
+        writeContext.writeRef(value.comparator());
+      }
+      writeSlots(writeContext, value, slotsSerializers);
+      return snapshot;
+    }
+
+    @Override
+    public Collection newCollection(ReadContext readContext) {
+      assert !config.isXlang();
+      MemoryBuffer buffer = readContext.getBuffer();
+      int numElements = buffer.readVarUint32Small7();
+      setNumElements(numElements);
+      int refId = readContext.lastPreservedRefId();
+      Comparator comparator = (Comparator) readContext.readRef();
+      return ContainerTransfer.readCollection(
+          type,
+          constructorFactory.newConstruction(comparator),
+          target -> readContext.setReadRef(refId, target),
+          target -> readAndSetFields(readContext, typeResolver, target, slotsSerializers));
+    }
+
+    @Override
+    public T onCollectionRead(Collection collection) {
+      return ContainerTransfer.<T>finishCollection(collection);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originCollection) {
+      Comparator comparator = copyContext.copyObject(((SortedSet) originCollection).comparator());
+      return ContainerTransfer.<T>copyCollection(
+          type,
+          originCollection,
+          copyContext,
+          constructorFactory.newConstruction(comparator),
+          target ->
+              fieldInfos =
+                  copyFields(
+                      copyContext,
+                      typeResolver,
+                      type,
+                      superClasses,
+                      fieldInfos,
+                      originCollection,
+                      target),
+          targetCollection -> copyElements(copyContext, originCollection, targetCollection));
+    }
+  }
+
+  public static class ChildPriorityQueueSerializer<T extends PriorityQueue>
+      extends CollectionSerializer<T> {
+    public static Set<Class<?>> superClasses = ofHashSet(PriorityQueue.class);
+    private final ContainerConstructors.PriorityQueueFactory<T> constructorFactory;
+    private final Serializer[] slotsSerializers;
+    private SerializationFieldInfo[] fieldInfos;
+
+    public ChildPriorityQueueSerializer(TypeResolver typeResolver, Class<T> cls) {
+      super(typeResolver, cls, true);
+      constructorFactory = ContainerConstructors.priorityQueueFactory(cls);
+      constructorFactory.checkSupported();
+      slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
     }
 
     @Override
     public Collection onCollectionWrite(WriteContext writeContext, T value) {
       MemoryBuffer buffer = writeContext.getBuffer();
       buffer.writeVarUint32Small7(value.size());
-      writeContext.writeRef(value.comparator());
-      for (Serializer slotsSerializer : slotsSerializers) {
-        slotsSerializer.write(writeContext, value);
+      if (!config.isXlang()) {
+        writeContext.writeRef(value.comparator());
       }
+      writeSlots(writeContext, value, slotsSerializers);
       return value;
     }
 
     @Override
-    public T newCollection(ReadContext readContext) {
+    public Collection newCollection(ReadContext readContext) {
+      assert !config.isXlang();
       MemoryBuffer buffer = readContext.getBuffer();
       int numElements = buffer.readVarUint32Small7();
       setNumElements(numElements);
-      int refId = readContext.lastPreservedRefId();
       Comparator comparator = (Comparator) readContext.readRef();
-      T collection = subclassFactory.newCollection(comparator, numElements);
-      readContext.setReadRef(refId, collection);
-      readChildFields(readContext, collection);
-      return collection;
+      return ContainerTransfer.readCollection(
+          type,
+          constructorFactory.newConstruction(comparator, numElements),
+          readContext::reference,
+          target -> readAndSetFields(readContext, typeResolver, target, slotsSerializers));
     }
 
     @Override
-    public Collection newCollection(CopyContext copyContext, Collection originCollection) {
-      T newCollection =
-          subclassFactory.newCollection(
-              copyContext.copyObject(((PriorityQueue<?>) originCollection).comparator()),
-              originCollection.size());
-      copyChildFields(copyContext, originCollection, newCollection);
-      return newCollection;
+    public T onCollectionRead(Collection collection) {
+      return ContainerTransfer.<T>finishCollection(collection);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originCollection) {
+      Comparator comparator =
+          copyContext.copyObject(((PriorityQueue) originCollection).comparator());
+      return ContainerTransfer.<T>copyCollection(
+          type,
+          originCollection,
+          copyContext,
+          constructorFactory.newConstruction(comparator, originCollection.size()),
+          target ->
+              fieldInfos =
+                  copyFields(
+                      copyContext,
+                      typeResolver,
+                      type,
+                      superClasses,
+                      fieldInfos,
+                      originCollection,
+                      target),
+          targetCollection -> copyElements(copyContext, originCollection, targetCollection));
     }
   }
 
@@ -332,18 +437,11 @@ public class ChildContainerSerializers {
             HashMap.class, LinkedHashMap.class, ConcurrentHashMap.class
             // TreeMap/ConcurrentSkipListMap need comparator as constructor argument
             );
-    protected final Serializer[] slotsSerializers;
+    private final Serializer[] slotsSerializers;
     private SerializationFieldInfo[] fieldInfos;
-    protected final Set<Class<?>> slotSuperClasses;
 
     public ChildMapSerializer(TypeResolver typeResolver, Class<T> cls) {
-      this(typeResolver, cls, superClasses);
-    }
-
-    protected ChildMapSerializer(
-        TypeResolver typeResolver, Class<T> cls, Set<Class<?>> superClasses) {
       super(typeResolver, cls);
-      this.slotSuperClasses = superClasses;
       slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
     }
 
@@ -367,257 +465,153 @@ public class ChildContainerSerializers {
     @Override
     public Map newMap(CopyContext copyContext, Map originMap) {
       Map newMap = super.newMap(copyContext, originMap);
-      copyChildFields(copyContext, originMap, newMap);
-      return newMap;
-    }
-
-    protected final void readChildFields(ReadContext readContext, Object map) {
-      readAndSetFields(readContext, typeResolver, map, slotsSerializers);
-    }
-
-    protected final void copyChildFields(CopyContext copyContext, Object originMap, Object newMap) {
       if (fieldInfos == null || fieldInfos.length == 0) {
-        List<Field> fields = ReflectionUtils.getFieldsWithoutSuperClasses(type, slotSuperClasses);
+        List<Field> fields = ReflectionUtils.getFieldsWithoutSuperClasses(type, superClasses);
         fieldInfos = FieldGroups.buildFieldsInfo(typeResolver, fields).allFields;
       }
       AbstractObjectSerializer.copyFields(copyContext, fieldInfos, originMap, newMap);
+      return newMap;
     }
   }
 
-  public static final class ChildSortedMapSerializer<T extends SortedMap>
-      extends ChildMapSerializer<T> {
-    public static final Set<Class<?>> superClasses =
-        ofHashSet(TreeMap.class, ConcurrentSkipListMap.class);
-    private final SortedMapSubclassFactory<T> subclassFactory;
+  public static class ChildSortedMapSerializer<T extends SortedMap> extends MapSerializer<T> {
+    public static Set<Class<?>> superClasses = ofHashSet(TreeMap.class);
+    private final ContainerConstructors.SortedMapFactory<T> constructorFactory;
+    private final Serializer[] slotsSerializers;
+    private SerializationFieldInfo[] fieldInfos;
 
     public ChildSortedMapSerializer(TypeResolver typeResolver, Class<T> cls) {
-      super(typeResolver, cls, superClasses);
-      subclassFactory = new SortedMapSubclassFactory<>(cls);
-    }
-
-    static boolean supports(Class<?> cls) {
-      return SortedMapSubclassFactory.supports(cls);
+      super(typeResolver, cls, true);
+      constructorFactory = ContainerConstructors.sortedMapFactory(cls, TreeMap.class);
+      constructorFactory.checkSupported();
+      slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
     }
 
     @Override
     public Map onMapWrite(WriteContext writeContext, T value) {
       MemoryBuffer buffer = writeContext.getBuffer();
       buffer.writeVarUint32Small7(value.size());
-      writeContext.writeRef(value.comparator());
-      for (Serializer slotsSerializer : slotsSerializers) {
-        slotsSerializer.write(writeContext, value);
+      if (!config.isXlang()) {
+        writeContext.writeRef(value.comparator());
       }
+      writeSlots(writeContext, value, slotsSerializers);
       return value;
     }
 
     @Override
     public Map newMap(ReadContext readContext) {
+      assert !config.isXlang();
       MemoryBuffer buffer = readContext.getBuffer();
-      int numElements = buffer.readVarUint32Small7();
-      setNumElements(numElements);
-      int refId = readContext.lastPreservedRefId();
+      setNumElements(buffer.readVarUint32Small7());
       Comparator comparator = (Comparator) readContext.readRef();
-      T map = subclassFactory.newMap(comparator);
-      readContext.setReadRef(refId, map);
-      readChildFields(readContext, map);
-      return map;
+      return ContainerTransfer.readMap(
+          type,
+          constructorFactory.newConstruction(comparator),
+          readContext::reference,
+          target -> readAndSetFields(readContext, typeResolver, target, slotsSerializers));
     }
 
     @Override
-    public Map newMap(CopyContext copyContext, Map originMap) {
-      T newMap =
-          subclassFactory.newMap(
-              copyContext.copyObject(((SortedMap<?, ?>) originMap).comparator()));
-      copyChildFields(copyContext, originMap, newMap);
-      return newMap;
+    public T onMapRead(Map map) {
+      return ContainerTransfer.<T>finishMap(map);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originMap) {
+      Comparator comparator = copyContext.copyObject(((SortedMap) originMap).comparator());
+      return ContainerTransfer.<T>copyMap(
+          type,
+          originMap,
+          copyContext,
+          constructorFactory.newConstruction(comparator),
+          target ->
+              fieldInfos =
+                  copyFields(
+                      copyContext, typeResolver, type, superClasses, fieldInfos, originMap, target),
+          targetMap -> copyEntry(copyContext, originMap, targetMap));
     }
   }
 
-  private static final class SortedSetSubclassFactory<T extends SortedSet> {
-    private final Class<T> type;
-    private final MethodHandle noArgConstructor;
-    private final MethodHandle comparatorConstructor;
-    private final MethodHandle sortedSetConstructor;
-    private final MethodHandle collectionConstructor;
+  public static class ChildConcurrentSkipListMapSerializer<T extends ConcurrentSkipListMap>
+      extends ConcurrentMapSerializer<T> {
+    public static Set<Class<?>> superClasses = ofHashSet(ConcurrentSkipListMap.class);
+    private final ContainerConstructors.SortedMapFactory<T> constructorFactory;
+    private final Serializer[] slotsSerializers;
+    private SerializationFieldInfo[] fieldInfos;
 
-    private SortedSetSubclassFactory(Class<T> type) {
-      this.type = type;
-      noArgConstructor = ReflectionUtils.getCtrHandle(type, false);
-      comparatorConstructor = findConstructorHandle(type, Comparator.class);
-      sortedSetConstructor = findConstructorHandle(type, SortedSet.class);
-      collectionConstructor = findConstructorHandle(type, Collection.class);
+    public ChildConcurrentSkipListMapSerializer(TypeResolver typeResolver, Class<T> cls) {
+      super(typeResolver, cls, true);
+      constructorFactory = ContainerConstructors.sortedMapFactory(cls, ConcurrentSkipListMap.class);
+      constructorFactory.checkSupported();
+      slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
     }
 
-    private static boolean supports(Class<?> cls) {
-      return ReflectionUtils.getCtrHandle(cls, false) != null
-          || findConstructorHandle(cls, Comparator.class) != null
-          || findConstructorHandle(cls, SortedSet.class) != null
-          || findConstructorHandle(cls, Collection.class) != null;
+    @Override
+    public MapSnapshot onMapWrite(WriteContext writeContext, T value) {
+      MapSnapshot snapshot = super.onMapWrite(writeContext, value);
+      if (!config.isXlang()) {
+        writeContext.writeRef(value.comparator());
+      }
+      writeSlots(writeContext, value, slotsSerializers);
+      return snapshot;
     }
 
-    private T newCollection(Comparator comparator) {
-      if (type == TreeSet.class) {
-        return (T) new TreeSet(comparator);
-      }
-      if (type == ConcurrentSkipListSet.class) {
-        return (T) new ConcurrentSkipListSet(comparator);
-      }
-      if (comparatorConstructor != null) {
-        return invokeConstructor(comparatorConstructor, comparator);
-      }
-      if (comparator != null && sortedSetConstructor != null) {
-        return invokeConstructor(sortedSetConstructor, new TreeSet(comparator));
-      }
-      if (noArgConstructor != null) {
-        return invokeConstructor(noArgConstructor);
-      }
-      if (comparator == null && collectionConstructor != null) {
-        return invokeConstructor(collectionConstructor, Collections.emptyList());
-      }
-      throw unsupportedConstructor(type);
-    }
-  }
-
-  private static final class SortedMapSubclassFactory<T extends SortedMap> {
-    private final Class<T> type;
-    private final MethodHandle noArgConstructor;
-    private final MethodHandle comparatorConstructor;
-    private final MethodHandle sortedMapConstructor;
-    private final MethodHandle mapConstructor;
-
-    private SortedMapSubclassFactory(Class<T> type) {
-      this.type = type;
-      noArgConstructor = ReflectionUtils.getCtrHandle(type, false);
-      comparatorConstructor = findConstructorHandle(type, Comparator.class);
-      sortedMapConstructor = findConstructorHandle(type, SortedMap.class);
-      mapConstructor = findConstructorHandle(type, Map.class);
+    @Override
+    public Map newMap(ReadContext readContext) {
+      assert !config.isXlang();
+      MemoryBuffer buffer = readContext.getBuffer();
+      setNumElements(buffer.readVarUint32Small7());
+      int refId = readContext.lastPreservedRefId();
+      Comparator comparator = (Comparator) readContext.readRef();
+      return ContainerTransfer.readMap(
+          type,
+          constructorFactory.newConstruction(comparator),
+          target -> readContext.setReadRef(refId, target),
+          target -> readAndSetFields(readContext, typeResolver, target, slotsSerializers));
     }
 
-    private static boolean supports(Class<?> cls) {
-      return ReflectionUtils.getCtrHandle(cls, false) != null
-          || findConstructorHandle(cls, Comparator.class) != null
-          || findConstructorHandle(cls, SortedMap.class) != null
-          || findConstructorHandle(cls, Map.class) != null;
+    @Override
+    public T onMapRead(Map map) {
+      return ContainerTransfer.<T>finishMap(map);
     }
 
-    private T newMap(Comparator comparator) {
-      if (type == TreeMap.class) {
-        return (T) new TreeMap(comparator);
-      }
-      if (type == ConcurrentSkipListMap.class) {
-        return (T) new ConcurrentSkipListMap(comparator);
-      }
-      if (comparatorConstructor != null) {
-        return invokeConstructor(comparatorConstructor, comparator);
-      }
-      if (comparator != null && sortedMapConstructor != null) {
-        return invokeConstructor(sortedMapConstructor, new TreeMap(comparator));
-      }
-      if (noArgConstructor != null) {
-        return invokeConstructor(noArgConstructor);
-      }
-      if (comparator == null && mapConstructor != null) {
-        return invokeConstructor(mapConstructor, Collections.emptyMap());
-      }
-      throw unsupportedConstructor(type);
+    @Override
+    public T copy(CopyContext copyContext, T originMap) {
+      Comparator comparator = copyContext.copyObject(((SortedMap) originMap).comparator());
+      return ContainerTransfer.<T>copyMap(
+          type,
+          originMap,
+          copyContext,
+          constructorFactory.newConstruction(comparator),
+          target ->
+              fieldInfos =
+                  copyFields(
+                      copyContext, typeResolver, type, superClasses, fieldInfos, originMap, target),
+          targetMap -> copyEntry(copyContext, originMap, targetMap));
     }
   }
 
-  private static final class PriorityQueueSubclassFactory<T extends PriorityQueue> {
-    private final Class<T> type;
-    private final MethodHandle noArgConstructor;
-    private final MethodHandle capacityConstructor;
-    private final MethodHandle comparatorConstructor;
-    private final MethodHandle capacityComparatorConstructor;
-    private final MethodHandle priorityQueueConstructor;
-    private final MethodHandle sortedSetConstructor;
-    private final MethodHandle collectionConstructor;
-
-    private PriorityQueueSubclassFactory(Class<T> type) {
-      this.type = type;
-      noArgConstructor = ReflectionUtils.getCtrHandle(type, false);
-      capacityConstructor = findConstructorHandle(type, int.class);
-      comparatorConstructor = findConstructorHandle(type, Comparator.class);
-      capacityComparatorConstructor = findConstructorHandle(type, int.class, Comparator.class);
-      priorityQueueConstructor = findConstructorHandle(type, PriorityQueue.class);
-      sortedSetConstructor = findConstructorHandle(type, SortedSet.class);
-      collectionConstructor = findConstructorHandle(type, Collection.class);
-    }
-
-    private static boolean supports(Class<?> cls) {
-      return ReflectionUtils.getCtrHandle(cls, false) != null
-          || findConstructorHandle(cls, int.class) != null
-          || findConstructorHandle(cls, Comparator.class) != null
-          || findConstructorHandle(cls, int.class, Comparator.class) != null
-          || findConstructorHandle(cls, PriorityQueue.class) != null
-          || findConstructorHandle(cls, SortedSet.class) != null
-          || findConstructorHandle(cls, Collection.class) != null;
-    }
-
-    private T newCollection(Comparator comparator, int numElements) {
-      int capacity = Math.max(numElements, 1);
-      if (type == PriorityQueue.class) {
-        return (T) new PriorityQueue(capacity, comparator);
-      }
-      if (capacityComparatorConstructor != null) {
-        return invokeConstructor(capacityComparatorConstructor, capacity, comparator);
-      }
-      if (comparator != null) {
-        if (comparatorConstructor != null) {
-          return invokeConstructor(comparatorConstructor, comparator);
-        }
-        if (priorityQueueConstructor != null) {
-          return invokeConstructor(
-              priorityQueueConstructor, new PriorityQueue(capacity, comparator));
-        }
-        if (sortedSetConstructor != null) {
-          return invokeConstructor(sortedSetConstructor, new TreeSet(comparator));
-        }
-        if (collectionConstructor != null) {
-          return invokeConstructor(collectionConstructor, new TreeSet(comparator));
-        }
-      }
-      if (noArgConstructor != null) {
-        return invokeConstructor(noArgConstructor);
-      }
-      if (capacityConstructor != null) {
-        return invokeConstructor(capacityConstructor, capacity);
-      }
-      if (priorityQueueConstructor != null) {
-        return invokeConstructor(priorityQueueConstructor, new PriorityQueue(capacity, comparator));
-      }
-      if (sortedSetConstructor != null) {
-        return invokeConstructor(sortedSetConstructor, new TreeSet(comparator));
-      }
-      if (collectionConstructor != null) {
-        return invokeConstructor(collectionConstructor, Collections.emptyList());
-      }
-      throw unsupportedConstructor(type);
+  private static void writeSlots(
+      WriteContext writeContext, Object value, Serializer[] slotsSerializers) {
+    for (Serializer slotsSerializer : slotsSerializers) {
+      slotsSerializer.write(writeContext, value);
     }
   }
 
-  private static MethodHandle findConstructorHandle(Class<?> cls, Class<?>... parameterTypes) {
-    try {
-      return ReflectionUtils.getCtrHandle(cls, parameterTypes);
-    } catch (Throwable t) {
-      return null;
+  private static SerializationFieldInfo[] copyFields(
+      CopyContext copyContext,
+      TypeResolver typeResolver,
+      Class<?> type,
+      Set<Class<?>> superClasses,
+      SerializationFieldInfo[] fieldInfos,
+      Object origin,
+      Object target) {
+    if (fieldInfos == null) {
+      List<Field> fields = ReflectionUtils.getFieldsWithoutSuperClasses(type, superClasses);
+      fieldInfos = FieldGroups.buildFieldsInfo(typeResolver, fields).allFields;
     }
-  }
-
-  private static <T> T invokeConstructor(MethodHandle constructor, Object... args) {
-    try {
-      return (T) constructor.invokeWithArguments(args);
-    } catch (Throwable t) {
-      throw new RuntimeException(t);
-    }
-  }
-
-  private static UnsupportedOperationException unsupportedConstructor(Class<?> cls) {
-    return new UnsupportedOperationException(
-        "Class "
-            + cls.getName()
-            + " requires a supported child-container constructor for auto-selected optimized"
-            + " serialization");
+    AbstractObjectSerializer.copyFields(copyContext, fieldInfos, origin, target);
+    return fieldInfos;
   }
 
   private static <T> Serializer[] buildSlotsSerializers(
@@ -629,8 +623,8 @@ public class ChildContainerSerializers {
       Serializer slotsSerializer;
       if (typeResolver.getConfig().isCompatible()) {
         TypeDef layerTypeDef = typeResolver.getTypeDef(cls, false);
-        // Use layer index within class hierarchy (not global counter)
-        // This ensures unique marker classes for each layer
+        // Use layer index within class hierarchy, not a global counter, so each layer gets a
+        // stable marker class on both write and read paths.
         Class<?> layerMarkerClass = LayerMarkerClassGenerator.getOrCreate(cls, layerIndex);
         slotsSerializer =
             new MetaSharedLayerSerializer(typeResolver, cls, layerTypeDef, layerMarkerClass);
@@ -653,9 +647,9 @@ public class ChildContainerSerializers {
     for (Serializer slotsSerializer : slotsSerializers) {
       if (slotsSerializer instanceof MetaSharedLayerSerializer) {
         MetaSharedLayerSerializer metaSerializer = (MetaSharedLayerSerializer) slotsSerializer;
-        // Read layer class meta first if meta share is enabled
-        // This corresponds to writeLayerClassMeta() in MetaSharedLayerSerializer.write()
         if (typeResolver.getConfig().isMetaShareEnabled()) {
+          // Read layer class meta first if meta share is enabled. This mirrors
+          // MetaSharedLayerSerializer.writeLayerClassMeta on the write side.
           readAndSkipLayerClassMeta(readContext);
         }
         metaSerializer.readAndSetFields(readContext, collection);
@@ -681,11 +675,11 @@ public class ChildContainerSerializers {
     boolean isRef = (indexMarker & 1) == 1;
     int index = indexMarker >>> 1;
     if (isRef) {
-      // Reference to previously read type - nothing more to read
+      // Reference to a previously read layer marker type, so there are no TypeDef bytes to skip.
       return;
     }
-    // New type - need to read and skip the TypeDef bytes
     long id = buffer.readInt64();
+    // New layer marker type, so skip over the serialized TypeDef payload.
     TypeDef.skipTypeDef(buffer, id);
     // Add a placeholder to keep readTypeInfos indices in sync with the write side's classMap.
     // The write side (writeLayerClassMeta) adds layer marker classes to classMap which shares

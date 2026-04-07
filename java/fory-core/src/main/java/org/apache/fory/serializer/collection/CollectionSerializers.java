@@ -36,7 +36,6 @@ import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.SortedSet;
@@ -55,7 +54,6 @@ import org.apache.fory.context.WriteContext;
 import org.apache.fory.exception.ForyException;
 import org.apache.fory.memory.MemoryBuffer;
 import org.apache.fory.memory.Platform;
-import org.apache.fory.reflect.ReflectionUtils;
 import org.apache.fory.resolver.ClassResolver;
 import org.apache.fory.resolver.TypeInfo;
 import org.apache.fory.resolver.TypeInfoHolder;
@@ -180,25 +178,14 @@ public class CollectionSerializers {
   }
 
   public static class SortedSetSerializer<T extends SortedSet> extends CollectionSerializer<T> {
-    private MethodHandle comparatorConstructor;
-    private MethodHandle noArgConstructor;
+    private final ContainerConstructors.SortedSetFactory<T> constructorFactory;
 
     public SortedSetSerializer(TypeResolver typeResolver, Class<T> cls) {
       super(typeResolver, cls, true);
-      if (cls != TreeSet.class) {
-        try {
-          comparatorConstructor = ReflectionUtils.getCtrHandle(cls, Comparator.class);
-        } catch (Exception e) {
-          // Subclass doesn't have a (Comparator) constructor, fall back to no-arg constructor.
-          try {
-            noArgConstructor = ReflectionUtils.getCtrHandle(cls);
-          } catch (Exception e2) {
-            throw new UnsupportedOperationException(
-                "Class " + cls.getName() + " requires either a (Comparator) or no-arg constructor",
-                e2);
-          }
-        }
-      }
+      constructorFactory =
+          ContainerConstructors.sortedSetFactory(
+              cls, ContainerConstructors.getSortedSetRootType(cls));
+      constructorFactory.checkSupported();
     }
 
     @Override
@@ -213,50 +200,35 @@ public class CollectionSerializers {
       return value;
     }
 
-    @SuppressWarnings("unchecked")
     @Override
-    public T newCollection(ReadContext readContext) {
+    public Collection newCollection(ReadContext readContext) {
       assert !config.isXlang();
       MemoryBuffer buffer = readContext.getBuffer();
       int numElements = buffer.readVarUint32Small7();
       setNumElements(numElements);
-      T collection;
       Comparator comparator = (Comparator) readContext.readRef();
-      if (type == TreeSet.class) {
-        collection = (T) new TreeSet(comparator);
-      } else {
-        try {
-          if (comparatorConstructor != null) {
-            collection = (T) comparatorConstructor.invoke(comparator);
-          } else {
-            collection = (T) noArgConstructor.invoke();
-          }
-        } catch (Throwable e) {
-          throw new RuntimeException(e);
-        }
-      }
-      readContext.reference(collection);
-      return collection;
+      return ContainerTransfer.readCollection(
+          type,
+          constructorFactory.newConstruction(comparator),
+          readContext::reference,
+          collection -> {});
     }
 
     @Override
-    public Collection newCollection(CopyContext copyContext, Collection originCollection) {
-      Collection collection;
+    public T onCollectionRead(Collection collection) {
+      return ContainerTransfer.<T>finishCollection(collection);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originCollection) {
       Comparator comparator = copyContext.copyObject(((SortedSet) originCollection).comparator());
-      if (Objects.equals(type, TreeSet.class)) {
-        collection = new TreeSet(comparator);
-      } else {
-        try {
-          if (comparatorConstructor != null) {
-            collection = (T) comparatorConstructor.invoke(comparator);
-          } else {
-            collection = (T) noArgConstructor.invoke();
-          }
-        } catch (Throwable e) {
-          throw new RuntimeException(e);
-        }
-      }
-      return collection;
+      return ContainerTransfer.<T>copyCollection(
+          type,
+          originCollection,
+          copyContext,
+          constructorFactory.newConstruction(comparator),
+          collection -> {},
+          targetCollection -> copyElements(copyContext, originCollection, targetCollection));
     }
   }
 
@@ -731,8 +703,12 @@ public class CollectionSerializers {
   }
 
   public static class PriorityQueueSerializer extends CollectionSerializer<PriorityQueue> {
+    private final ContainerConstructors.PriorityQueueFactory<PriorityQueue> constructorFactory;
+
     public PriorityQueueSerializer(TypeResolver typeResolver, Class<PriorityQueue> cls) {
       super(typeResolver, cls, true);
+      constructorFactory = ContainerConstructors.priorityQueueFactory(cls);
+      constructorFactory.checkSupported();
     }
 
     public Collection onCollectionWrite(WriteContext writeContext, PriorityQueue value) {
@@ -748,20 +724,39 @@ public class CollectionSerializers {
 
     @Override
     public Collection newCollection(CopyContext copyContext, Collection collection) {
-      return new PriorityQueue(
-          collection.size(), copyContext.copyObject(((PriorityQueue) collection).comparator()));
+      Comparator comparator = copyContext.copyObject(((PriorityQueue) collection).comparator());
+      return constructorFactory.newConstruction(comparator, collection.size()).newCollection();
     }
 
     @Override
-    public PriorityQueue newCollection(ReadContext readContext) {
+    public Collection newCollection(ReadContext readContext) {
       assert !config.isXlang();
       MemoryBuffer buffer = readContext.getBuffer();
       int numElements = buffer.readVarUint32Small7();
       setNumElements(numElements);
       Comparator comparator = (Comparator) readContext.readRef();
-      PriorityQueue queue = new PriorityQueue(comparator);
-      readContext.reference(queue);
-      return queue;
+      return ContainerTransfer.readCollection(
+          type,
+          constructorFactory.newConstruction(comparator, numElements),
+          readContext::reference,
+          queue -> {});
+    }
+
+    @Override
+    public PriorityQueue onCollectionRead(Collection collection) {
+      return ContainerTransfer.<PriorityQueue>finishCollection(collection);
+    }
+
+    @Override
+    public PriorityQueue copy(CopyContext copyContext, PriorityQueue originCollection) {
+      Comparator comparator = copyContext.copyObject(originCollection.comparator());
+      return ContainerTransfer.<PriorityQueue>copyCollection(
+          type,
+          originCollection,
+          copyContext,
+          constructorFactory.newConstruction(comparator, originCollection.size()),
+          queue -> {},
+          targetCollection -> copyElements(copyContext, originCollection, targetCollection));
     }
   }
 

@@ -19,7 +19,6 @@
 
 package org.apache.fory.serializer.collection;
 
-import java.lang.invoke.MethodHandle;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -39,7 +38,6 @@ import org.apache.fory.context.ReadContext;
 import org.apache.fory.context.WriteContext;
 import org.apache.fory.memory.MemoryBuffer;
 import org.apache.fory.memory.Platform;
-import org.apache.fory.reflect.ReflectionUtils;
 import org.apache.fory.resolver.ClassResolver;
 import org.apache.fory.resolver.TypeInfo;
 import org.apache.fory.resolver.TypeResolver;
@@ -119,25 +117,14 @@ public class MapSerializers {
   }
 
   public static class SortedMapSerializer<T extends SortedMap> extends MapSerializer<T> {
-    private MethodHandle comparatorConstructor;
-    private MethodHandle noArgConstructor;
+    private final ContainerConstructors.SortedMapFactory<T> constructorFactory;
 
     public SortedMapSerializer(TypeResolver typeResolver, Class<T> cls) {
       super(typeResolver, cls, true);
-      if (cls != TreeMap.class) {
-        try {
-          comparatorConstructor = ReflectionUtils.getCtrHandle(cls, Comparator.class);
-        } catch (Exception e) {
-          // Subclass doesn't have a (Comparator) constructor, fall back to no-arg constructor.
-          try {
-            noArgConstructor = ReflectionUtils.getCtrHandle(cls);
-          } catch (Exception e2) {
-            throw new UnsupportedOperationException(
-                "Class " + cls.getName() + " requires either a (Comparator) or no-arg constructor",
-                e2);
-          }
-        }
-      }
+      constructorFactory =
+          ContainerConstructors.sortedMapFactory(
+              cls, ContainerConstructors.getSortedMapRootType(cls));
+      constructorFactory.checkSupported();
     }
 
     @Override
@@ -158,43 +145,28 @@ public class MapSerializers {
       assert !config.isXlang();
       MemoryBuffer buffer = readContext.getBuffer();
       setNumElements(buffer.readVarUint32Small7());
-      T map;
       Comparator comparator = (Comparator) readContext.readRef();
-      if (type == TreeMap.class) {
-        map = (T) new TreeMap(comparator);
-      } else {
-        try {
-          if (comparatorConstructor != null) {
-            map = (T) comparatorConstructor.invoke(comparator);
-          } else {
-            map = (T) noArgConstructor.invoke();
-          }
-        } catch (Throwable e) {
-          throw new RuntimeException(e);
-        }
-      }
-      readContext.reference(map);
-      return map;
+      return ContainerTransfer.readMap(
+          type, constructorFactory.newConstruction(comparator), readContext::reference, map -> {});
     }
 
     @Override
-    public Map newMap(CopyContext copyContext, Map originMap) {
+    public T onMapRead(Map map) {
+      return ContainerTransfer.<T>finishMap(map);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originMap) {
       Comparator comparator = copyContext.copyObject(((SortedMap) originMap).comparator());
-      Map map;
-      if (type == TreeMap.class) {
-        map = new TreeMap(comparator);
-      } else {
-        try {
-          if (comparatorConstructor != null) {
-            map = (Map) comparatorConstructor.invoke(comparator);
-          } else {
-            map = (Map) noArgConstructor.invoke();
-          }
-        } catch (Throwable e) {
-          throw new RuntimeException(e);
-        }
-      }
-      return map;
+      ContainerConstructors.MapConstruction<T> construction =
+          constructorFactory.newConstruction(comparator);
+      return ContainerTransfer.<T>copyMap(
+          type,
+          originMap,
+          copyContext,
+          construction,
+          map -> {},
+          newMap -> copyEntry(copyContext, originMap, newMap));
     }
   }
 

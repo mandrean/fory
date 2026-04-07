@@ -79,6 +79,13 @@ public class MapSerializersTest extends ForyTestBase {
     }
   }
 
+  private static <T extends Map<?, ?>> T requireNonEmpty(T values) {
+    if (values.isEmpty()) {
+      throw new IllegalArgumentException("values must not be empty");
+    }
+    return values;
+  }
+
   private static final class SortedMapConstructorCase {
     private final String name;
     private final Class<?> expectedType;
@@ -470,6 +477,26 @@ public class MapSerializersTest extends ForyTestBase {
     }
   }
 
+  public static class ChildTreeMapWithMapConstructor extends TreeMap<String, String> {
+    public ChildTreeMapWithMapConstructor(Map<? extends String, ? extends String> values) {
+      super(requireNonEmpty(values));
+    }
+  }
+
+  public static class ChildConcurrentSkipListMapWithMapConstructor
+      extends ConcurrentSkipListMap<String, String> {
+    public ChildConcurrentSkipListMapWithMapConstructor(
+        Map<? extends String, ? extends String> values) {
+      super(requireNonEmpty(values));
+    }
+  }
+
+  public static class ChildTreeMapWithSortedMapConstructor extends TreeMap<String, String> {
+    public ChildTreeMapWithSortedMapConstructor(SortedMap<String, ? extends String> values) {
+      super(values);
+    }
+  }
+
   @Test(dataProvider = "referenceTrackingConfig")
   public void testSortedMapSubclassWithoutComparatorCtor(boolean referenceTrackingConfig) {
     Fory fory =
@@ -545,6 +572,114 @@ public class MapSerializersTest extends ForyTestBase {
     ChildTreeMapWithComparator deserialized = serDe(fory, map);
     assertEquals(deserialized, map);
     assertEquals(deserialized.getClass(), ChildTreeMapWithComparator.class);
+  }
+
+  @Test(dataProvider = "referenceTrackingConfig")
+  public void testSortedMapSubclassWithMapRegisteredWithSortedMapSerializer(
+      boolean referenceTrackingConfig) {
+    Fory fory =
+        builder()
+            .withLanguage(Language.JAVA)
+            .withRefTracking(referenceTrackingConfig)
+            .requireClassRegistration(false)
+            .build();
+    fory.registerSerializer(
+        ChildTreeMapWithMapConstructor.class,
+        new MapSerializers.SortedMapSerializer<>(
+            fory.getTypeResolver(), ChildTreeMapWithMapConstructor.class));
+    ChildTreeMapWithMapConstructor map =
+        new ChildTreeMapWithMapConstructor(ImmutableMap.of("b", "B", "a", "A"));
+    ChildTreeMapWithMapConstructor deserialized = serDe(fory, map);
+    assertEquals(deserialized, map);
+    assertEquals(deserialized.getClass(), ChildTreeMapWithMapConstructor.class);
+    Assert.assertNull(deserialized.comparator());
+  }
+
+  @Test(dataProvider = "referenceTrackingConfig")
+  public void testSortedMapSubclassWithSortedMapRegisteredWithSortedMapSerializer(
+      boolean referenceTrackingConfig) {
+    Fory fory =
+        builder()
+            .withLanguage(Language.JAVA)
+            .withRefTracking(referenceTrackingConfig)
+            .requireClassRegistration(false)
+            .build();
+    fory.registerSerializer(
+        ChildTreeMapWithSortedMapConstructor.class,
+        new MapSerializers.SortedMapSerializer<>(
+            fory.getTypeResolver(), ChildTreeMapWithSortedMapConstructor.class));
+    TreeMap<String, String> source = new TreeMap<>(Comparator.reverseOrder());
+    source.put("b", "B");
+    source.put("a", "A");
+    ChildTreeMapWithSortedMapConstructor map = new ChildTreeMapWithSortedMapConstructor(source);
+    ChildTreeMapWithSortedMapConstructor deserialized = serDe(fory, map);
+    assertEquals(deserialized, map);
+    assertEquals(deserialized.getClass(), ChildTreeMapWithSortedMapConstructor.class);
+    Assert.assertNotNull(deserialized.comparator());
+    Assert.assertTrue(deserialized.comparator().compare("a", "b") > 0);
+  }
+
+  @Test(dataProvider = "referenceTrackingConfig")
+  public void testRegisteredValidatingSourceConstructorMaps(boolean referenceTrackingConfig) {
+    Fory fory =
+        builder()
+            .withLanguage(Language.JAVA)
+            .withRefTracking(referenceTrackingConfig)
+            .requireClassRegistration(false)
+            .build();
+    fory.registerSerializer(
+        ChildTreeMapWithMapConstructor.class,
+        new MapSerializers.SortedMapSerializer<>(
+            fory.getTypeResolver(), ChildTreeMapWithMapConstructor.class));
+    fory.registerSerializer(
+        ChildConcurrentSkipListMapWithMapConstructor.class,
+        new MapSerializers.SortedMapSerializer<>(
+            fory.getTypeResolver(), ChildConcurrentSkipListMapWithMapConstructor.class));
+
+    ChildTreeMapWithMapConstructor treeMap =
+        new ChildTreeMapWithMapConstructor(ImmutableMap.of("b", "B", "a", "A"));
+    treeMap.clear();
+    ChildTreeMapWithMapConstructor deserializedTreeMap = serDe(fory, treeMap);
+    assertEquals(deserializedTreeMap.getClass(), ChildTreeMapWithMapConstructor.class);
+    Assert.assertTrue(deserializedTreeMap.isEmpty());
+    Assert.assertNull(deserializedTreeMap.comparator());
+
+    ChildConcurrentSkipListMapWithMapConstructor skipListMap =
+        new ChildConcurrentSkipListMapWithMapConstructor(ImmutableMap.of("b", "B", "a", "A"));
+    skipListMap.clear();
+    ChildConcurrentSkipListMapWithMapConstructor deserializedSkipListMap = serDe(fory, skipListMap);
+    assertEquals(
+        deserializedSkipListMap.getClass(), ChildConcurrentSkipListMapWithMapConstructor.class);
+    Assert.assertTrue(deserializedSkipListMap.isEmpty());
+    Assert.assertNull(deserializedSkipListMap.comparator());
+  }
+
+  @Test(dataProvider = "foryCopyConfig")
+  public void testRegisteredValidatingSourceConstructorMaps(Fory fory) {
+    fory.registerSerializer(
+        ChildTreeMapWithMapConstructor.class,
+        new MapSerializers.SortedMapSerializer<>(
+            fory.getTypeResolver(), ChildTreeMapWithMapConstructor.class));
+    fory.registerSerializer(
+        ChildConcurrentSkipListMapWithMapConstructor.class,
+        new MapSerializers.SortedMapSerializer<>(
+            fory.getTypeResolver(), ChildConcurrentSkipListMapWithMapConstructor.class));
+
+    ChildTreeMapWithMapConstructor treeMap =
+        new ChildTreeMapWithMapConstructor(ImmutableMap.of("b", "B", "a", "A"));
+    treeMap.clear();
+    ChildTreeMapWithMapConstructor copiedTreeMap = fory.copy(treeMap);
+    assertEquals(copiedTreeMap.getClass(), ChildTreeMapWithMapConstructor.class);
+    Assert.assertTrue(copiedTreeMap.isEmpty());
+    Assert.assertNull(copiedTreeMap.comparator());
+
+    ChildConcurrentSkipListMapWithMapConstructor skipListMap =
+        new ChildConcurrentSkipListMapWithMapConstructor(ImmutableMap.of("b", "B", "a", "A"));
+    skipListMap.clear();
+    ChildConcurrentSkipListMapWithMapConstructor copiedSkipListMap = fory.copy(skipListMap);
+    assertEquals(copiedSkipListMap.getClass(), ChildConcurrentSkipListMapWithMapConstructor.class);
+    Assert.assertTrue(copiedSkipListMap.isEmpty());
+    Assert.assertNull(copiedSkipListMap.comparator());
   }
 
   @Test
