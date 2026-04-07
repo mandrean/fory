@@ -124,6 +124,7 @@ public class MapSerializers {
       constructorFactory =
           ContainerConstructors.sortedMapFactory(
               cls, ContainerConstructors.getSortedMapRootType(cls));
+      constructorFactory.checkSupported();
     }
 
     @Override
@@ -145,15 +146,27 @@ public class MapSerializers {
       MemoryBuffer buffer = readContext.getBuffer();
       setNumElements(buffer.readVarUint32Small7());
       Comparator comparator = (Comparator) readContext.readRef();
-      T map = constructorFactory.newMap(comparator);
-      readContext.reference(map);
-      return map;
+      return ContainerTransfer.readMap(
+          type, constructorFactory.newConstruction(comparator), readContext::reference, map -> {});
     }
 
     @Override
-    public Map newMap(CopyContext copyContext, Map originMap) {
+    public T onMapRead(Map map) {
+      return ContainerTransfer.<T>finishMap(map);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originMap) {
       Comparator comparator = copyContext.copyObject(((SortedMap) originMap).comparator());
-      return constructorFactory.newMap(comparator);
+      ContainerConstructors.MapConstruction<T> construction =
+          constructorFactory.newConstruction(comparator);
+      return ContainerTransfer.<T>copyMap(
+          type,
+          originMap,
+          copyContext,
+          construction,
+          map -> {},
+          newMap -> copyEntry(copyContext, originMap, newMap));
     }
   }
 

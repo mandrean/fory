@@ -94,6 +94,13 @@ public class CollectionSerializersTest extends ForyTestBase {
     }
   }
 
+  private static <T extends Collection<?>> T requireNonEmpty(T values) {
+    if (values.isEmpty()) {
+      throw new IllegalArgumentException("values must not be empty");
+    }
+    return values;
+  }
+
   private static final class SortedSetConstructorCase {
     private final String name;
     private final Class<?> expectedType;
@@ -418,7 +425,21 @@ public class CollectionSerializersTest extends ForyTestBase {
 
   public static class ChildTreeSetWithCollectionConstructor extends TreeSet<String> {
     public ChildTreeSetWithCollectionConstructor(Collection<? extends String> values) {
-      super(values);
+      super(requireNonEmpty(values));
+    }
+  }
+
+  public static class ChildConcurrentSkipListSetWithCollectionConstructor
+      extends ConcurrentSkipListSet<String> {
+    public ChildConcurrentSkipListSetWithCollectionConstructor(
+        Collection<? extends String> values) {
+      super(requireNonEmpty(values));
+    }
+  }
+
+  public static class ChildPriorityQueueWithCollectionConstructor extends PriorityQueue<String> {
+    public ChildPriorityQueueWithCollectionConstructor(Collection<? extends String> values) {
+      super(requireNonEmpty(values));
     }
   }
 
@@ -550,6 +571,155 @@ public class CollectionSerializersTest extends ForyTestBase {
     assertEquals(deserialized.getClass(), ChildTreeSetWithSortedSetConstructor.class);
     Assert.assertNotNull(deserialized.comparator());
     Assert.assertTrue(deserialized.comparator().compare("a", "b") > 0);
+  }
+
+  @Test(dataProvider = "referenceTrackingConfig")
+  public void testRegisteredValidatingSourceConstructorCollections(
+      boolean referenceTrackingConfig) {
+    Fory fory =
+        Fory.builder()
+            .withLanguage(Language.JAVA)
+            .withRefTracking(referenceTrackingConfig)
+            .requireClassRegistration(false)
+            .build();
+    fory.registerSerializer(
+        ChildTreeSetWithCollectionConstructor.class,
+        new CollectionSerializers.SortedSetSerializer<>(
+            fory.getTypeResolver(), ChildTreeSetWithCollectionConstructor.class));
+    fory.registerSerializer(
+        ChildConcurrentSkipListSetWithCollectionConstructor.class,
+        new CollectionSerializers.SortedSetSerializer<>(
+            fory.getTypeResolver(), ChildConcurrentSkipListSetWithCollectionConstructor.class));
+    fory.registerSerializer(
+        ChildPriorityQueueWithCollectionConstructor.class,
+        new CollectionSerializers.PriorityQueueSerializer(
+            fory.getTypeResolver(), (Class) ChildPriorityQueueWithCollectionConstructor.class));
+
+    ChildTreeSetWithCollectionConstructor treeSet =
+        new ChildTreeSetWithCollectionConstructor(ImmutableList.of("b", "a", "c"));
+    treeSet.clear();
+    ChildTreeSetWithCollectionConstructor deserializedTreeSet = serDe(fory, treeSet);
+    assertEquals(deserializedTreeSet.getClass(), ChildTreeSetWithCollectionConstructor.class);
+    Assert.assertTrue(deserializedTreeSet.isEmpty());
+    Assert.assertNull(deserializedTreeSet.comparator());
+
+    ChildConcurrentSkipListSetWithCollectionConstructor skipListSet =
+        new ChildConcurrentSkipListSetWithCollectionConstructor(ImmutableList.of("b", "a", "c"));
+    skipListSet.clear();
+    ChildConcurrentSkipListSetWithCollectionConstructor deserializedSkipListSet =
+        serDe(fory, skipListSet);
+    assertEquals(
+        deserializedSkipListSet.getClass(),
+        ChildConcurrentSkipListSetWithCollectionConstructor.class);
+    Assert.assertTrue(deserializedSkipListSet.isEmpty());
+    Assert.assertNull(deserializedSkipListSet.comparator());
+
+    ChildPriorityQueueWithCollectionConstructor queue =
+        new ChildPriorityQueueWithCollectionConstructor(ImmutableList.of("b", "a", "c"));
+    queue.clear();
+    ChildPriorityQueueWithCollectionConstructor deserializedQueue = serDe(fory, queue);
+    assertEquals(deserializedQueue.getClass(), ChildPriorityQueueWithCollectionConstructor.class);
+    Assert.assertTrue(deserializedQueue.isEmpty());
+    Assert.assertNull(deserializedQueue.comparator());
+
+    TreeSet<String> reverseTreeSetSource = new TreeSet<>(Comparator.reverseOrder());
+    reverseTreeSetSource.addAll(ImmutableList.of("b", "a", "c"));
+    ChildPriorityQueueWithCollectionConstructor queueFromSortedSet =
+        new ChildPriorityQueueWithCollectionConstructor(reverseTreeSetSource);
+    ChildPriorityQueueWithCollectionConstructor deserializedQueueFromSortedSet =
+        serDe(fory, queueFromSortedSet);
+    assertEquals(
+        deserializedQueueFromSortedSet.getClass(),
+        ChildPriorityQueueWithCollectionConstructor.class);
+    Assert.assertNotNull(deserializedQueueFromSortedSet.comparator());
+    Assert.assertTrue(deserializedQueueFromSortedSet.comparator().compare("a", "b") > 0);
+    assertEquals(
+        drainPriorityQueue(deserializedQueueFromSortedSet), drainPriorityQueue(queueFromSortedSet));
+
+    PriorityQueue<String> reversePriorityQueueSource =
+        new PriorityQueue<>(3, Comparator.reverseOrder());
+    reversePriorityQueueSource.addAll(ImmutableList.of("b", "a", "c"));
+    ChildPriorityQueueWithCollectionConstructor queueFromPriorityQueue =
+        new ChildPriorityQueueWithCollectionConstructor(reversePriorityQueueSource);
+    ChildPriorityQueueWithCollectionConstructor deserializedQueueFromPriorityQueue =
+        serDe(fory, queueFromPriorityQueue);
+    assertEquals(
+        deserializedQueueFromPriorityQueue.getClass(),
+        ChildPriorityQueueWithCollectionConstructor.class);
+    Assert.assertNotNull(deserializedQueueFromPriorityQueue.comparator());
+    Assert.assertTrue(deserializedQueueFromPriorityQueue.comparator().compare("a", "b") > 0);
+    assertEquals(
+        drainPriorityQueue(deserializedQueueFromPriorityQueue),
+        drainPriorityQueue(queueFromPriorityQueue));
+  }
+
+  @Test(dataProvider = "foryCopyConfig")
+  public void testRegisteredValidatingSourceConstructorCollections(Fory fory) {
+    fory.registerSerializer(
+        ChildTreeSetWithCollectionConstructor.class,
+        new CollectionSerializers.SortedSetSerializer<>(
+            fory.getTypeResolver(), ChildTreeSetWithCollectionConstructor.class));
+    fory.registerSerializer(
+        ChildConcurrentSkipListSetWithCollectionConstructor.class,
+        new CollectionSerializers.SortedSetSerializer<>(
+            fory.getTypeResolver(), ChildConcurrentSkipListSetWithCollectionConstructor.class));
+    fory.registerSerializer(
+        ChildPriorityQueueWithCollectionConstructor.class,
+        new CollectionSerializers.PriorityQueueSerializer(
+            fory.getTypeResolver(), (Class) ChildPriorityQueueWithCollectionConstructor.class));
+
+    ChildTreeSetWithCollectionConstructor treeSet =
+        new ChildTreeSetWithCollectionConstructor(ImmutableList.of("b", "a", "c"));
+    treeSet.clear();
+    ChildTreeSetWithCollectionConstructor copiedTreeSet = fory.copy(treeSet);
+    assertEquals(copiedTreeSet.getClass(), ChildTreeSetWithCollectionConstructor.class);
+    Assert.assertTrue(copiedTreeSet.isEmpty());
+    Assert.assertNull(copiedTreeSet.comparator());
+
+    ChildConcurrentSkipListSetWithCollectionConstructor skipListSet =
+        new ChildConcurrentSkipListSetWithCollectionConstructor(ImmutableList.of("b", "a", "c"));
+    skipListSet.clear();
+    ChildConcurrentSkipListSetWithCollectionConstructor copiedSkipListSet = fory.copy(skipListSet);
+    assertEquals(
+        copiedSkipListSet.getClass(), ChildConcurrentSkipListSetWithCollectionConstructor.class);
+    Assert.assertTrue(copiedSkipListSet.isEmpty());
+    Assert.assertNull(copiedSkipListSet.comparator());
+
+    ChildPriorityQueueWithCollectionConstructor queue =
+        new ChildPriorityQueueWithCollectionConstructor(ImmutableList.of("b", "a", "c"));
+    queue.clear();
+    ChildPriorityQueueWithCollectionConstructor copiedQueue = fory.copy(queue);
+    assertEquals(copiedQueue.getClass(), ChildPriorityQueueWithCollectionConstructor.class);
+    Assert.assertTrue(copiedQueue.isEmpty());
+    Assert.assertNull(copiedQueue.comparator());
+
+    TreeSet<String> reverseTreeSetSource = new TreeSet<>(Comparator.reverseOrder());
+    reverseTreeSetSource.addAll(ImmutableList.of("b", "a", "c"));
+    ChildPriorityQueueWithCollectionConstructor queueFromSortedSet =
+        new ChildPriorityQueueWithCollectionConstructor(reverseTreeSetSource);
+    ChildPriorityQueueWithCollectionConstructor copiedQueueFromSortedSet =
+        fory.copy(queueFromSortedSet);
+    assertEquals(
+        copiedQueueFromSortedSet.getClass(), ChildPriorityQueueWithCollectionConstructor.class);
+    Assert.assertNotNull(copiedQueueFromSortedSet.comparator());
+    Assert.assertTrue(copiedQueueFromSortedSet.comparator().compare("a", "b") > 0);
+    assertEquals(
+        drainPriorityQueue(copiedQueueFromSortedSet), drainPriorityQueue(queueFromSortedSet));
+
+    PriorityQueue<String> reversePriorityQueueSource =
+        new PriorityQueue<>(3, Comparator.reverseOrder());
+    reversePriorityQueueSource.addAll(ImmutableList.of("b", "a", "c"));
+    ChildPriorityQueueWithCollectionConstructor queueFromPriorityQueue =
+        new ChildPriorityQueueWithCollectionConstructor(reversePriorityQueueSource);
+    ChildPriorityQueueWithCollectionConstructor copiedQueueFromPriorityQueue =
+        fory.copy(queueFromPriorityQueue);
+    assertEquals(
+        copiedQueueFromPriorityQueue.getClass(), ChildPriorityQueueWithCollectionConstructor.class);
+    Assert.assertNotNull(copiedQueueFromPriorityQueue.comparator());
+    Assert.assertTrue(copiedQueueFromPriorityQueue.comparator().compare("a", "b") > 0);
+    assertEquals(
+        drainPriorityQueue(copiedQueueFromPriorityQueue),
+        drainPriorityQueue(queueFromPriorityQueue));
   }
 
   @Test

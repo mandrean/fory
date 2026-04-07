@@ -100,17 +100,18 @@ public class ChildContainerSerializers {
         return ChildCollectionSerializer.class;
       }
       if (type == TreeSet.class) {
-        return hasSupportedSortedSetConstructor(cls, TreeSet.class)
+        return ContainerConstructors.sortedSetFactory((Class) cls, TreeSet.class).isSupported()
             ? ChildSortedSetSerializer.class
             : null;
       }
       if (type == ConcurrentSkipListSet.class) {
-        return hasSupportedSortedSetConstructor(cls, ConcurrentSkipListSet.class)
+        return ContainerConstructors.sortedSetFactory((Class) cls, ConcurrentSkipListSet.class)
+                .isSupported()
             ? ChildConcurrentSkipListSetSerializer.class
             : null;
       }
       if (type == PriorityQueue.class) {
-        return hasSupportedPriorityQueueConstructor(cls)
+        return ContainerConstructors.priorityQueueFactory((Class) cls).isSupported()
             ? ChildPriorityQueueSerializer.class
             : null;
       }
@@ -145,12 +146,13 @@ public class ChildContainerSerializers {
         return ChildMapSerializer.class;
       }
       if (type == TreeMap.class) {
-        return hasSupportedSortedMapConstructor(cls, TreeMap.class)
+        return ContainerConstructors.sortedMapFactory((Class) cls, TreeMap.class).isSupported()
             ? ChildSortedMapSerializer.class
             : null;
       }
       if (type == ConcurrentSkipListMap.class) {
-        return hasSupportedSortedMapConstructor(cls, ConcurrentSkipListMap.class)
+        return ContainerConstructors.sortedMapFactory((Class) cls, ConcurrentSkipListMap.class)
+                .isSupported()
             ? ChildConcurrentSkipListMapSerializer.class
             : null;
       }
@@ -161,35 +163,6 @@ public class ChildContainerSerializers {
       type = type.getSuperclass();
     }
     return null;
-  }
-
-  private static boolean hasSupportedSortedSetConstructor(
-      Class<?> cls, Class<? extends SortedSet> rootType) {
-    try {
-      ContainerConstructors.sortedSetFactory((Class) cls, rootType);
-      return true;
-    } catch (UnsupportedOperationException e) {
-      return false;
-    }
-  }
-
-  private static boolean hasSupportedSortedMapConstructor(
-      Class<?> cls, Class<? extends SortedMap> rootType) {
-    try {
-      ContainerConstructors.sortedMapFactory((Class) cls, rootType);
-      return true;
-    } catch (UnsupportedOperationException e) {
-      return false;
-    }
-  }
-
-  private static boolean hasSupportedPriorityQueueConstructor(Class<?> cls) {
-    try {
-      ContainerConstructors.priorityQueueFactory((Class) cls);
-      return true;
-    } catch (UnsupportedOperationException e) {
-      return false;
-    }
   }
 
   /**
@@ -265,6 +238,7 @@ public class ChildContainerSerializers {
     public ChildSortedSetSerializer(TypeResolver typeResolver, Class<T> cls) {
       super(typeResolver, cls, true);
       constructorFactory = ContainerConstructors.sortedSetFactory(cls, TreeSet.class);
+      constructorFactory.checkSupported();
       slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
     }
 
@@ -286,27 +260,37 @@ public class ChildContainerSerializers {
       int numElements = buffer.readVarUint32Small7();
       setNumElements(numElements);
       Comparator comparator = (Comparator) readContext.readRef();
-      T collection = constructorFactory.newCollection(comparator);
-      readContext.reference(collection);
-      readAndSetFields(readContext, typeResolver, collection, slotsSerializers);
-      return collection;
+      return ContainerTransfer.readCollection(
+          type,
+          constructorFactory.newConstruction(comparator),
+          readContext::reference,
+          target -> readAndSetFields(readContext, typeResolver, target, slotsSerializers));
     }
 
     @Override
-    public Collection newCollection(CopyContext copyContext, Collection originCollection) {
-      T newCollection =
-          constructorFactory.newCollection(
-              copyContext.copyObject(((SortedSet) originCollection).comparator()));
-      fieldInfos =
-          copyFields(
-              copyContext,
-              typeResolver,
-              type,
-              superClasses,
-              fieldInfos,
-              originCollection,
-              newCollection);
-      return newCollection;
+    public T onCollectionRead(Collection collection) {
+      return ContainerTransfer.<T>finishCollection(collection);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originCollection) {
+      Comparator comparator = copyContext.copyObject(((SortedSet) originCollection).comparator());
+      return ContainerTransfer.<T>copyCollection(
+          type,
+          originCollection,
+          copyContext,
+          constructorFactory.newConstruction(comparator),
+          target ->
+              fieldInfos =
+                  copyFields(
+                      copyContext,
+                      typeResolver,
+                      type,
+                      superClasses,
+                      fieldInfos,
+                      originCollection,
+                      target),
+          targetCollection -> copyElements(copyContext, originCollection, targetCollection));
     }
   }
 
@@ -320,6 +304,7 @@ public class ChildContainerSerializers {
     public ChildConcurrentSkipListSetSerializer(TypeResolver typeResolver, Class<T> cls) {
       super(typeResolver, cls, true);
       constructorFactory = ContainerConstructors.sortedSetFactory(cls, ConcurrentSkipListSet.class);
+      constructorFactory.checkSupported();
       slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
     }
 
@@ -341,27 +326,37 @@ public class ChildContainerSerializers {
       setNumElements(numElements);
       int refId = readContext.lastPreservedRefId();
       Comparator comparator = (Comparator) readContext.readRef();
-      T collection = constructorFactory.newCollection(comparator);
-      readContext.setReadRef(refId, collection);
-      readAndSetFields(readContext, typeResolver, collection, slotsSerializers);
-      return collection;
+      return ContainerTransfer.readCollection(
+          type,
+          constructorFactory.newConstruction(comparator),
+          target -> readContext.setReadRef(refId, target),
+          target -> readAndSetFields(readContext, typeResolver, target, slotsSerializers));
     }
 
     @Override
-    public Collection newCollection(CopyContext copyContext, Collection originCollection) {
-      T newCollection =
-          constructorFactory.newCollection(
-              copyContext.copyObject(((SortedSet) originCollection).comparator()));
-      fieldInfos =
-          copyFields(
-              copyContext,
-              typeResolver,
-              type,
-              superClasses,
-              fieldInfos,
-              originCollection,
-              newCollection);
-      return newCollection;
+    public T onCollectionRead(Collection collection) {
+      return ContainerTransfer.<T>finishCollection(collection);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originCollection) {
+      Comparator comparator = copyContext.copyObject(((SortedSet) originCollection).comparator());
+      return ContainerTransfer.<T>copyCollection(
+          type,
+          originCollection,
+          copyContext,
+          constructorFactory.newConstruction(comparator),
+          target ->
+              fieldInfos =
+                  copyFields(
+                      copyContext,
+                      typeResolver,
+                      type,
+                      superClasses,
+                      fieldInfos,
+                      originCollection,
+                      target),
+          targetCollection -> copyElements(copyContext, originCollection, targetCollection));
     }
   }
 
@@ -375,6 +370,7 @@ public class ChildContainerSerializers {
     public ChildPriorityQueueSerializer(TypeResolver typeResolver, Class<T> cls) {
       super(typeResolver, cls, true);
       constructorFactory = ContainerConstructors.priorityQueueFactory(cls);
+      constructorFactory.checkSupported();
       slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
     }
 
@@ -396,28 +392,38 @@ public class ChildContainerSerializers {
       int numElements = buffer.readVarUint32Small7();
       setNumElements(numElements);
       Comparator comparator = (Comparator) readContext.readRef();
-      T collection = constructorFactory.newCollection(comparator, numElements);
-      readContext.reference(collection);
-      readAndSetFields(readContext, typeResolver, collection, slotsSerializers);
-      return collection;
+      return ContainerTransfer.readCollection(
+          type,
+          constructorFactory.newConstruction(comparator, numElements),
+          readContext::reference,
+          target -> readAndSetFields(readContext, typeResolver, target, slotsSerializers));
     }
 
     @Override
-    public Collection newCollection(CopyContext copyContext, Collection originCollection) {
-      T newCollection =
-          constructorFactory.newCollection(
-              copyContext.copyObject(((PriorityQueue) originCollection).comparator()),
-              originCollection.size());
-      fieldInfos =
-          copyFields(
-              copyContext,
-              typeResolver,
-              type,
-              superClasses,
-              fieldInfos,
-              originCollection,
-              newCollection);
-      return newCollection;
+    public T onCollectionRead(Collection collection) {
+      return ContainerTransfer.<T>finishCollection(collection);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originCollection) {
+      Comparator comparator =
+          copyContext.copyObject(((PriorityQueue) originCollection).comparator());
+      return ContainerTransfer.<T>copyCollection(
+          type,
+          originCollection,
+          copyContext,
+          constructorFactory.newConstruction(comparator, originCollection.size()),
+          target ->
+              fieldInfos =
+                  copyFields(
+                      copyContext,
+                      typeResolver,
+                      type,
+                      superClasses,
+                      fieldInfos,
+                      originCollection,
+                      target),
+          targetCollection -> copyElements(copyContext, originCollection, targetCollection));
     }
   }
 
@@ -477,6 +483,7 @@ public class ChildContainerSerializers {
     public ChildSortedMapSerializer(TypeResolver typeResolver, Class<T> cls) {
       super(typeResolver, cls, true);
       constructorFactory = ContainerConstructors.sortedMapFactory(cls, TreeMap.class);
+      constructorFactory.checkSupported();
       slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
     }
 
@@ -497,19 +504,31 @@ public class ChildContainerSerializers {
       MemoryBuffer buffer = readContext.getBuffer();
       setNumElements(buffer.readVarUint32Small7());
       Comparator comparator = (Comparator) readContext.readRef();
-      T map = constructorFactory.newMap(comparator);
-      readContext.reference(map);
-      readAndSetFields(readContext, typeResolver, map, slotsSerializers);
-      return map;
+      return ContainerTransfer.readMap(
+          type,
+          constructorFactory.newConstruction(comparator),
+          readContext::reference,
+          target -> readAndSetFields(readContext, typeResolver, target, slotsSerializers));
     }
 
     @Override
-    public Map newMap(CopyContext copyContext, Map originMap) {
-      T newMap =
-          constructorFactory.newMap(copyContext.copyObject(((SortedMap) originMap).comparator()));
-      fieldInfos =
-          copyFields(copyContext, typeResolver, type, superClasses, fieldInfos, originMap, newMap);
-      return newMap;
+    public T onMapRead(Map map) {
+      return ContainerTransfer.<T>finishMap(map);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originMap) {
+      Comparator comparator = copyContext.copyObject(((SortedMap) originMap).comparator());
+      return ContainerTransfer.<T>copyMap(
+          type,
+          originMap,
+          copyContext,
+          constructorFactory.newConstruction(comparator),
+          target ->
+              fieldInfos =
+                  copyFields(
+                      copyContext, typeResolver, type, superClasses, fieldInfos, originMap, target),
+          targetMap -> copyEntry(copyContext, originMap, targetMap));
     }
   }
 
@@ -523,6 +542,7 @@ public class ChildContainerSerializers {
     public ChildConcurrentSkipListMapSerializer(TypeResolver typeResolver, Class<T> cls) {
       super(typeResolver, cls, true);
       constructorFactory = ContainerConstructors.sortedMapFactory(cls, ConcurrentSkipListMap.class);
+      constructorFactory.checkSupported();
       slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
     }
 
@@ -543,19 +563,31 @@ public class ChildContainerSerializers {
       setNumElements(buffer.readVarUint32Small7());
       int refId = readContext.lastPreservedRefId();
       Comparator comparator = (Comparator) readContext.readRef();
-      T map = constructorFactory.newMap(comparator);
-      readContext.setReadRef(refId, map);
-      readAndSetFields(readContext, typeResolver, map, slotsSerializers);
-      return map;
+      return ContainerTransfer.readMap(
+          type,
+          constructorFactory.newConstruction(comparator),
+          target -> readContext.setReadRef(refId, target),
+          target -> readAndSetFields(readContext, typeResolver, target, slotsSerializers));
     }
 
     @Override
-    public Map newMap(CopyContext copyContext, Map originMap) {
-      T newMap =
-          constructorFactory.newMap(copyContext.copyObject(((SortedMap) originMap).comparator()));
-      fieldInfos =
-          copyFields(copyContext, typeResolver, type, superClasses, fieldInfos, originMap, newMap);
-      return newMap;
+    public T onMapRead(Map map) {
+      return ContainerTransfer.<T>finishMap(map);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originMap) {
+      Comparator comparator = copyContext.copyObject(((SortedMap) originMap).comparator());
+      return ContainerTransfer.<T>copyMap(
+          type,
+          originMap,
+          copyContext,
+          constructorFactory.newConstruction(comparator),
+          target ->
+              fieldInfos =
+                  copyFields(
+                      copyContext, typeResolver, type, superClasses, fieldInfos, originMap, target),
+          targetMap -> copyEntry(copyContext, originMap, targetMap));
     }
   }
 
@@ -591,6 +623,8 @@ public class ChildContainerSerializers {
       Serializer slotsSerializer;
       if (typeResolver.getConfig().isCompatible()) {
         TypeDef layerTypeDef = typeResolver.getTypeDef(cls, false);
+        // Use layer index within class hierarchy, not a global counter, so each layer gets a
+        // stable marker class on both write and read paths.
         Class<?> layerMarkerClass = LayerMarkerClassGenerator.getOrCreate(cls, layerIndex);
         slotsSerializer =
             new MetaSharedLayerSerializer(typeResolver, cls, layerTypeDef, layerMarkerClass);
@@ -614,6 +648,8 @@ public class ChildContainerSerializers {
       if (slotsSerializer instanceof MetaSharedLayerSerializer) {
         MetaSharedLayerSerializer metaSerializer = (MetaSharedLayerSerializer) slotsSerializer;
         if (typeResolver.getConfig().isMetaShareEnabled()) {
+          // Read layer class meta first if meta share is enabled. This mirrors
+          // MetaSharedLayerSerializer.writeLayerClassMeta on the write side.
           readAndSkipLayerClassMeta(readContext);
         }
         metaSerializer.readAndSetFields(readContext, collection);
@@ -639,10 +675,16 @@ public class ChildContainerSerializers {
     boolean isRef = (indexMarker & 1) == 1;
     int index = indexMarker >>> 1;
     if (isRef) {
+      // Reference to a previously read layer marker type, so there are no TypeDef bytes to skip.
       return;
     }
     long id = buffer.readInt64();
+    // New layer marker type, so skip over the serialized TypeDef payload.
     TypeDef.skipTypeDef(buffer, id);
+    // Add a placeholder to keep readTypeInfos indices in sync with the write side's classMap.
+    // The write side (writeLayerClassMeta) adds layer marker classes to classMap which shares
+    // the same index space as writeSharedClassMeta. Without this placeholder, subsequent
+    // readSharedClassMeta reference lookups would use wrong indices.
     metaReadContext.readTypeInfos.add(null);
   }
 }

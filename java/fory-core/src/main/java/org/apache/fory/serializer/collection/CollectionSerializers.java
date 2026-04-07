@@ -185,6 +185,7 @@ public class CollectionSerializers {
       constructorFactory =
           ContainerConstructors.sortedSetFactory(
               cls, ContainerConstructors.getSortedSetRootType(cls));
+      constructorFactory.checkSupported();
     }
 
     @Override
@@ -199,23 +200,35 @@ public class CollectionSerializers {
       return value;
     }
 
-    @SuppressWarnings("unchecked")
     @Override
-    public T newCollection(ReadContext readContext) {
+    public Collection newCollection(ReadContext readContext) {
       assert !config.isXlang();
       MemoryBuffer buffer = readContext.getBuffer();
       int numElements = buffer.readVarUint32Small7();
       setNumElements(numElements);
       Comparator comparator = (Comparator) readContext.readRef();
-      T collection = constructorFactory.newCollection(comparator);
-      readContext.reference(collection);
-      return collection;
+      return ContainerTransfer.readCollection(
+          type,
+          constructorFactory.newConstruction(comparator),
+          readContext::reference,
+          collection -> {});
     }
 
     @Override
-    public Collection newCollection(CopyContext copyContext, Collection originCollection) {
+    public T onCollectionRead(Collection collection) {
+      return ContainerTransfer.<T>finishCollection(collection);
+    }
+
+    @Override
+    public T copy(CopyContext copyContext, T originCollection) {
       Comparator comparator = copyContext.copyObject(((SortedSet) originCollection).comparator());
-      return constructorFactory.newCollection(comparator);
+      return ContainerTransfer.<T>copyCollection(
+          type,
+          originCollection,
+          copyContext,
+          constructorFactory.newConstruction(comparator),
+          collection -> {},
+          targetCollection -> copyElements(copyContext, originCollection, targetCollection));
     }
   }
 
@@ -695,6 +708,7 @@ public class CollectionSerializers {
     public PriorityQueueSerializer(TypeResolver typeResolver, Class<PriorityQueue> cls) {
       super(typeResolver, cls, true);
       constructorFactory = ContainerConstructors.priorityQueueFactory(cls);
+      constructorFactory.checkSupported();
     }
 
     public Collection onCollectionWrite(WriteContext writeContext, PriorityQueue value) {
@@ -710,20 +724,39 @@ public class CollectionSerializers {
 
     @Override
     public Collection newCollection(CopyContext copyContext, Collection collection) {
-      return constructorFactory.newCollection(
-          copyContext.copyObject(((PriorityQueue) collection).comparator()), collection.size());
+      Comparator comparator = copyContext.copyObject(((PriorityQueue) collection).comparator());
+      return constructorFactory.newConstruction(comparator, collection.size()).newCollection();
     }
 
     @Override
-    public PriorityQueue newCollection(ReadContext readContext) {
+    public Collection newCollection(ReadContext readContext) {
       assert !config.isXlang();
       MemoryBuffer buffer = readContext.getBuffer();
       int numElements = buffer.readVarUint32Small7();
       setNumElements(numElements);
       Comparator comparator = (Comparator) readContext.readRef();
-      PriorityQueue queue = constructorFactory.newCollection(comparator, numElements);
-      readContext.reference(queue);
-      return queue;
+      return ContainerTransfer.readCollection(
+          type,
+          constructorFactory.newConstruction(comparator, numElements),
+          readContext::reference,
+          queue -> {});
+    }
+
+    @Override
+    public PriorityQueue onCollectionRead(Collection collection) {
+      return ContainerTransfer.<PriorityQueue>finishCollection(collection);
+    }
+
+    @Override
+    public PriorityQueue copy(CopyContext copyContext, PriorityQueue originCollection) {
+      Comparator comparator = copyContext.copyObject(originCollection.comparator());
+      return ContainerTransfer.<PriorityQueue>copyCollection(
+          type,
+          originCollection,
+          copyContext,
+          constructorFactory.newConstruction(comparator, originCollection.size()),
+          queue -> {},
+          targetCollection -> copyElements(copyContext, originCollection, targetCollection));
     }
   }
 
