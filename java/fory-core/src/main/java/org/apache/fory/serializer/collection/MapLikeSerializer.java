@@ -989,6 +989,13 @@ public abstract class MapLikeSerializer<T> extends Serializer<T> {
     }
   }
 
+  /**
+   * Create the final empty map target for copy.
+   *
+   * <p>This hook must return the real destination object that will be registered in {@link
+   * CopyContext} and then populated by the generic copy path. It must not return a temporary
+   * delegate or transfer wrapper.
+   */
   public Map newMap(CopyContext copyContext, Map map) {
     return newMap(map);
   }

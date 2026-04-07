@@ -472,6 +472,13 @@ public abstract class CollectionLikeSerializer<T> extends Serializer<T> {
     }
   }
 
+  /**
+   * Create the final empty collection target for copy.
+   *
+   * <p>This hook must return the real destination object that will be registered in {@link
+   * CopyContext} and then populated by the generic copy path. It must not return a temporary
+   * delegate or transfer wrapper.
+   */
   public Collection newCollection(CopyContext copyContext, Collection collection) {
     return newCollection(collection);
   }

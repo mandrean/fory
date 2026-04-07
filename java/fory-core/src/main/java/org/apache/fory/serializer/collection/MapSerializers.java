@@ -160,13 +160,14 @@ public class MapSerializers {
       Comparator comparator = copyContext.copyObject(((SortedMap) originMap).comparator());
       ContainerConstructors.MapConstruction<T> construction =
           constructorFactory.newConstruction(comparator);
-      return ContainerTransfer.<T>copyMap(
-          type,
-          originMap,
-          copyContext,
-          construction,
-          map -> {},
-          newMap -> copyEntry(copyContext, originMap, newMap));
+      return (T)
+          ContainerTransfer.copyMap(
+              type,
+              originMap,
+              copyContext,
+              construction,
+              map -> {},
+              newMap -> copyEntry(copyContext, originMap, newMap));
     }
   }
 

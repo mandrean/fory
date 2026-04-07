@@ -222,11 +222,13 @@ public class CollectionSerializers {
     @Override
     public T copy(CopyContext copyContext, T originCollection) {
       Comparator comparator = copyContext.copyObject(((SortedSet) originCollection).comparator());
+      ContainerConstructors.CollectionConstruction<T> construction =
+          constructorFactory.newConstruction(comparator);
       return ContainerTransfer.<T>copyCollection(
           type,
           originCollection,
           copyContext,
-          constructorFactory.newConstruction(comparator),
+          construction,
           collection -> {},
           targetCollection -> copyElements(copyContext, originCollection, targetCollection));
     }
@@ -510,13 +512,7 @@ public class CollectionSerializers {
         setNumElements(mapSerializer.getAndClearNumElements());
       } else {
         Map map = (Map) mapSerializer.read(readContext);
-        try {
-          set = Platform.newInstance(type);
-          m.invoke(set, map);
-          s.invoke(set, map.keySet());
-        } catch (Throwable e) {
-          throw new RuntimeException(e);
-        }
+        set = newSetFromBackingMap(map);
         setNumElements(0);
       }
       readContext.setReadRef(refId, set);
@@ -525,13 +521,23 @@ public class CollectionSerializers {
 
     @Override
     public Collection newCollection(CopyContext copyContext, Collection originCollection) {
+      throw new IllegalStateException(
+          "SetFromMap copy must go through copy(...) so the backing map is copied via its"
+              + " serializer");
+    }
+
+    @Override
+    public Set<?> copy(CopyContext copyContext, Set<?> originCollection) {
       assert !config.isXlang();
       Map<?, Boolean> map =
           (Map<?, Boolean>) Platform.getObject(originCollection, MAP_FIELD_OFFSET);
-      MapLikeSerializer mapSerializer =
-          (MapLikeSerializer) typeResolver.getSerializer(map.getClass());
-      Map newMap = mapSerializer.newMap(copyContext, map);
-      return Collections.newSetFromMap(newMap);
+      Set set = Platform.newInstance(type);
+      copyContext.reference(originCollection, set);
+      // Copy the backing map through its own serializer so sorted/container subclasses preserve
+      // transfer semantics and shared references with the wrapper set.
+      Map copiedMap = copyContext.copyObject(map);
+      attachBackingMap(set, copiedMap);
+      return set;
     }
 
     @Override
@@ -549,6 +555,21 @@ public class CollectionSerializers {
         buffer.writeBoolean(false);
         mapSerializer.write(writeContext, map);
         return EMPTY_COLLECTION_STUB;
+      }
+    }
+
+    private Set newSetFromBackingMap(Map map) {
+      Set set = Platform.newInstance(type);
+      attachBackingMap(set, map);
+      return set;
+    }
+
+    private void attachBackingMap(Set set, Map map) {
+      try {
+        m.invoke(set, map);
+        s.invoke(set, map.keySet());
+      } catch (Throwable e) {
+        throw new RuntimeException(e);
       }
     }
   }
@@ -725,7 +746,17 @@ public class CollectionSerializers {
     @Override
     public Collection newCollection(CopyContext copyContext, Collection collection) {
       Comparator comparator = copyContext.copyObject(((PriorityQueue) collection).comparator());
-      return constructorFactory.newConstruction(comparator, collection.size()).newCollection();
+      ContainerConstructors.CollectionConstruction<PriorityQueue> construction =
+          constructorFactory.newConstruction(comparator, collection.size());
+      if (construction.getKind() == ContainerConstructors.Kind.DIRECT) {
+        return ((ContainerConstructors.DirectCollectionConstruction<PriorityQueue>) construction)
+            .newCollection();
+      }
+      // Copy must stay on the explicit copy(...) path so ContainerTransfer owns any temporary root
+      // delegate. This hook is only allowed to return the final empty target object.
+      throw new IllegalStateException(
+          "PriorityQueueSerializer.newCollection(CopyContext, ...) must return the final copy"
+              + " target; root-transfer queue copy must go through copy(...)");
     }
 
     @Override
@@ -750,11 +781,13 @@ public class CollectionSerializers {
     @Override
     public PriorityQueue copy(CopyContext copyContext, PriorityQueue originCollection) {
       Comparator comparator = copyContext.copyObject(originCollection.comparator());
+      ContainerConstructors.CollectionConstruction<PriorityQueue> construction =
+          constructorFactory.newConstruction(comparator, originCollection.size());
       return ContainerTransfer.<PriorityQueue>copyCollection(
           type,
           originCollection,
           copyContext,
-          constructorFactory.newConstruction(comparator, originCollection.size()),
+          construction,
           queue -> {},
           targetCollection -> copyElements(copyContext, originCollection, targetCollection));
     }
