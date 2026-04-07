@@ -196,6 +196,10 @@ final class StateTransferringMap<T extends Map> extends AbstractMap<Object, Obje
 final class ContainerTransfer {
   private ContainerTransfer() {}
 
+  // Sorted-container source constructors need two-stage materialization: allocate and register the
+  // final leaf first, then populate a JDK root container and transfer only the inherited
+  // root-container state into the leaf. Direct constructors skip the transfer wrapper entirely.
+
   static <T extends Collection> Collection wrapCollection(
       T target, Collection delegate, Class<?> rootType) {
     return new StateTransferringCollection<>(target, delegate, rootType);
@@ -210,16 +214,23 @@ final class ContainerTransfer {
       ContainerConstructors.CollectionConstruction<T> construction,
       Consumer<T> registrar,
       Consumer<T> initializer) {
-    if (!construction.needsStateTransfer()) {
-      T collection = construction.newCollection();
+    if (construction.getKind() == ContainerConstructors.Kind.DIRECT) {
+      ContainerConstructors.DirectCollectionConstruction<T> directConstruction =
+          (ContainerConstructors.DirectCollectionConstruction<T>) construction;
+      T collection = directConstruction.newCollection();
       registrar.accept(collection);
       initializer.accept(collection);
       return collection;
     }
+    ContainerConstructors.RootTransferCollectionConstruction<T> rootTransferConstruction =
+        (ContainerConstructors.RootTransferCollectionConstruction<T>) construction;
     T target = Platform.newInstance(type);
     registrar.accept(target);
     initializer.accept(target);
-    return wrapCollection(target, construction.newRootCollection(), construction.getRootType());
+    return wrapCollection(
+        target,
+        rootTransferConstruction.newRootCollection(),
+        rootTransferConstruction.getRootType());
   }
 
   static <T extends Map> Map readMap(
@@ -227,16 +238,21 @@ final class ContainerTransfer {
       ContainerConstructors.MapConstruction<T> construction,
       Consumer<T> registrar,
       Consumer<T> initializer) {
-    if (!construction.needsStateTransfer()) {
-      T map = construction.newMap();
+    if (construction.getKind() == ContainerConstructors.Kind.DIRECT) {
+      ContainerConstructors.DirectMapConstruction<T> directConstruction =
+          (ContainerConstructors.DirectMapConstruction<T>) construction;
+      T map = directConstruction.newMap();
       registrar.accept(map);
       initializer.accept(map);
       return map;
     }
+    ContainerConstructors.RootTransferMapConstruction<T> rootTransferConstruction =
+        (ContainerConstructors.RootTransferMapConstruction<T>) construction;
     T target = Platform.newInstance(type);
     registrar.accept(target);
     initializer.accept(target);
-    return wrapMap(target, construction.newRootMap(), construction.getRootType());
+    return wrapMap(
+        target, rootTransferConstruction.newRootMap(), rootTransferConstruction.getRootType());
   }
 
   static <T extends Collection> T finishCollection(Collection collection) {
@@ -264,19 +280,23 @@ final class ContainerTransfer {
       ContainerConstructors.CollectionConstruction<T> construction,
       Consumer<T> initializer,
       Consumer<Collection> contentCopier) {
-    if (!construction.needsStateTransfer()) {
-      T target = construction.newCollection();
+    if (construction.getKind() == ContainerConstructors.Kind.DIRECT) {
+      ContainerConstructors.DirectCollectionConstruction<T> directConstruction =
+          (ContainerConstructors.DirectCollectionConstruction<T>) construction;
+      T target = directConstruction.newCollection();
       copyContext.reference(originCollection, target);
       initializer.accept(target);
       contentCopier.accept(target);
       return target;
     }
+    ContainerConstructors.RootTransferCollectionConstruction<T> rootTransferConstruction =
+        (ContainerConstructors.RootTransferCollectionConstruction<T>) construction;
     T target = Platform.newInstance(type);
     copyContext.reference(originCollection, target);
     initializer.accept(target);
-    Collection rootCollection = construction.newRootCollection();
+    Collection rootCollection = rootTransferConstruction.newRootCollection();
     contentCopier.accept(rootCollection);
-    transferRootState(construction.getRootType(), rootCollection, target);
+    transferRootState(rootTransferConstruction.getRootType(), rootCollection, target);
     return target;
   }
 
@@ -287,19 +307,23 @@ final class ContainerTransfer {
       ContainerConstructors.MapConstruction<T> construction,
       Consumer<T> initializer,
       Consumer<Map> entryCopier) {
-    if (!construction.needsStateTransfer()) {
-      T target = construction.newMap();
+    if (construction.getKind() == ContainerConstructors.Kind.DIRECT) {
+      ContainerConstructors.DirectMapConstruction<T> directConstruction =
+          (ContainerConstructors.DirectMapConstruction<T>) construction;
+      T target = directConstruction.newMap();
       copyContext.reference(originMap, target);
       initializer.accept(target);
       entryCopier.accept(target);
       return target;
     }
+    ContainerConstructors.RootTransferMapConstruction<T> rootTransferConstruction =
+        (ContainerConstructors.RootTransferMapConstruction<T>) construction;
     T target = Platform.newInstance(type);
     copyContext.reference(originMap, target);
     initializer.accept(target);
-    Map rootMap = construction.newRootMap();
+    Map rootMap = rootTransferConstruction.newRootMap();
     entryCopier.accept(rootMap);
-    transferRootState(construction.getRootType(), rootMap, target);
+    transferRootState(rootTransferConstruction.getRootType(), rootMap, target);
     return target;
   }
 }
@@ -321,6 +345,9 @@ final class RootStateTransferrer {
 
   private RootStateTransferrer() {}
 
+  // Source constructors rebuild the JDK root portion on a temporary delegate. We then copy only
+  // the inherited non-static fields from that root hierarchy into the final leaf instance, leaving
+  // any subclass-specific fields on the leaf untouched.
   static void transfer(Class<?> rootType, Object source, Object target) {
     for (RootField rootField : rootFieldsCache.get(rootType)) {
       rootField.copy(source, target);

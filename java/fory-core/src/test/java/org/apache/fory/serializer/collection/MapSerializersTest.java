@@ -57,6 +57,7 @@ import org.apache.fory.ForyTestBase;
 import org.apache.fory.annotation.Ref;
 import org.apache.fory.collection.LazyMap;
 import org.apache.fory.collection.MapEntry;
+import org.apache.fory.config.Language;
 import org.apache.fory.exception.DeserializationException;
 import org.apache.fory.memory.MemoryBuffer;
 import org.apache.fory.memory.MemoryUtils;

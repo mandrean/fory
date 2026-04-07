@@ -53,7 +53,6 @@ import lombok.NoArgsConstructor;
 import org.apache.fory.Fory;
 import org.apache.fory.ForyTestBase;
 import org.apache.fory.config.CompatibleMode;
-import org.apache.fory.config.Language;
 import org.apache.fory.serializer.Serializer;
 import org.apache.fory.test.bean.Cyclic;
 import org.testng.Assert;

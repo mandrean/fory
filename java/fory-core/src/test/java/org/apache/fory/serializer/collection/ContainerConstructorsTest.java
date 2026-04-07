@@ -155,6 +155,33 @@ public class ContainerConstructorsTest {
     public UnsupportedPriorityQueue(String ignored) {}
   }
 
+  private static <T extends Collection>
+      ContainerConstructors.DirectCollectionConstruction<T> assertDirectCollectionPlan(
+          ContainerConstructors.CollectionConstruction<T> construction) {
+    Assert.assertSame(construction.getKind(), ContainerConstructors.Kind.DIRECT);
+    return (ContainerConstructors.DirectCollectionConstruction<T>) construction;
+  }
+
+  private static <T extends Collection>
+      ContainerConstructors.RootTransferCollectionConstruction<T> assertRootTransferCollectionPlan(
+          ContainerConstructors.CollectionConstruction<T> construction) {
+    Assert.assertSame(construction.getKind(), ContainerConstructors.Kind.ROOT_TRANSFER);
+    return (ContainerConstructors.RootTransferCollectionConstruction<T>) construction;
+  }
+
+  private static <T extends Map> ContainerConstructors.DirectMapConstruction<T> assertDirectMapPlan(
+      ContainerConstructors.MapConstruction<T> construction) {
+    Assert.assertSame(construction.getKind(), ContainerConstructors.Kind.DIRECT);
+    return (ContainerConstructors.DirectMapConstruction<T>) construction;
+  }
+
+  private static <T extends Map>
+      ContainerConstructors.RootTransferMapConstruction<T> assertRootTransferMapPlan(
+          ContainerConstructors.MapConstruction<T> construction) {
+    Assert.assertSame(construction.getKind(), ContainerConstructors.Kind.ROOT_TRANSFER);
+    return (ContainerConstructors.RootTransferMapConstruction<T>) construction;
+  }
+
   @Test
   public void testRootTypeSelection() {
     Assert.assertSame(
@@ -175,33 +202,43 @@ public class ContainerConstructorsTest {
     ContainerConstructors.SortedSetFactory<ComparatorOnlyTreeSet> comparatorFactory =
         ContainerConstructors.sortedSetFactory(ComparatorOnlyTreeSet.class, TreeSet.class);
     Assert.assertTrue(comparatorFactory.isSupported());
-    Assert.assertFalse(comparatorFactory.needsStateTransfer(comparator));
-    Assert.assertSame(comparatorFactory.getRootType(), TreeSet.class);
-    ComparatorOnlyTreeSet directSet = comparatorFactory.newCollection(comparator);
+    ContainerConstructors.DirectCollectionConstruction<ComparatorOnlyTreeSet>
+        directComparatorConstruction =
+            assertDirectCollectionPlan(comparatorFactory.newConstruction(comparator));
+    ComparatorOnlyTreeSet directSet = directComparatorConstruction.newCollection();
     Assert.assertSame(directSet.seenComparator, comparator);
     Assert.assertSame(directSet.comparator(), comparator);
 
     ContainerConstructors.SortedSetFactory<SortedSetOnlyTreeSet> sortedSetFactory =
         ContainerConstructors.sortedSetFactory(SortedSetOnlyTreeSet.class, TreeSet.class);
     Assert.assertTrue(sortedSetFactory.isSupported());
-    Assert.assertTrue(sortedSetFactory.needsStateTransfer(comparator));
-    SortedSet<String> sortedSetRoot = sortedSetFactory.newRootCollection(comparator);
+    ContainerConstructors.RootTransferCollectionConstruction<SortedSetOnlyTreeSet>
+        rootTransferSortedSetConstruction =
+            assertRootTransferCollectionPlan(sortedSetFactory.newConstruction(comparator));
+    SortedSet<String> sortedSetRoot =
+        (SortedSet<String>) rootTransferSortedSetConstruction.newRootCollection();
+    Assert.assertSame(rootTransferSortedSetConstruction.getRootType(), TreeSet.class);
     Assert.assertSame(sortedSetRoot.getClass(), TreeSet.class);
     Assert.assertSame(sortedSetRoot.comparator(), comparator);
 
     ContainerConstructors.SortedSetFactory<NoArgOnlyTreeSet> noArgFactory =
         ContainerConstructors.sortedSetFactory(NoArgOnlyTreeSet.class, TreeSet.class);
     Assert.assertTrue(noArgFactory.isSupported());
-    Assert.assertFalse(noArgFactory.needsStateTransfer(null));
-    Assert.assertNull(noArgFactory.newCollection(null).comparator());
+    ContainerConstructors.DirectCollectionConstruction<NoArgOnlyTreeSet> directNoArgConstruction =
+        assertDirectCollectionPlan(noArgFactory.newConstruction(null));
+    Assert.assertNull(directNoArgConstruction.newCollection().comparator());
 
     ContainerConstructors.SortedSetFactory<CollectionOnlyConcurrentSkipListSet> collectionFactory =
         ContainerConstructors.sortedSetFactory(
             CollectionOnlyConcurrentSkipListSet.class, ConcurrentSkipListSet.class);
     Assert.assertTrue(collectionFactory.isSupported());
-    Assert.assertTrue(collectionFactory.needsStateTransfer(null));
-    SortedSet<String> concurrentRoot = collectionFactory.newRootCollection(null);
-    Assert.assertSame(collectionFactory.getRootType(), ConcurrentSkipListSet.class);
+    ContainerConstructors.RootTransferCollectionConstruction<CollectionOnlyConcurrentSkipListSet>
+        rootTransferCollectionConstruction =
+            assertRootTransferCollectionPlan(collectionFactory.newConstruction(null));
+    SortedSet<String> concurrentRoot =
+        (SortedSet<String>) rootTransferCollectionConstruction.newRootCollection();
+    Assert.assertSame(
+        rootTransferCollectionConstruction.getRootType(), ConcurrentSkipListSet.class);
     Assert.assertSame(concurrentRoot.getClass(), ConcurrentSkipListSet.class);
     Assert.assertNull(concurrentRoot.comparator());
   }
@@ -214,7 +251,7 @@ public class ContainerConstructorsTest {
     UnsupportedOperationException comparatorException =
         Assert.expectThrows(
             UnsupportedOperationException.class,
-            () -> collectionFactory.needsStateTransfer(new ReverseStringComparator()));
+            () -> collectionFactory.newConstruction(new ReverseStringComparator()));
     Assert.assertTrue(
         comparatorException.getMessage().contains("comparator-preserving constructor"));
     Assert.assertTrue(
@@ -241,33 +278,41 @@ public class ContainerConstructorsTest {
     ContainerConstructors.SortedMapFactory<ComparatorOnlyTreeMap> comparatorFactory =
         ContainerConstructors.sortedMapFactory(ComparatorOnlyTreeMap.class, TreeMap.class);
     Assert.assertTrue(comparatorFactory.isSupported());
-    Assert.assertFalse(comparatorFactory.needsStateTransfer(comparator));
-    Assert.assertSame(comparatorFactory.getRootType(), TreeMap.class);
-    ComparatorOnlyTreeMap directMap = comparatorFactory.newMap(comparator);
+    ContainerConstructors.DirectMapConstruction<ComparatorOnlyTreeMap>
+        directComparatorConstruction =
+            assertDirectMapPlan(comparatorFactory.newConstruction(comparator));
+    ComparatorOnlyTreeMap directMap = directComparatorConstruction.newMap();
     Assert.assertSame(directMap.seenComparator, comparator);
     Assert.assertSame(directMap.comparator(), comparator);
 
     ContainerConstructors.SortedMapFactory<SortedMapOnlyTreeMap> sortedMapFactory =
         ContainerConstructors.sortedMapFactory(SortedMapOnlyTreeMap.class, TreeMap.class);
     Assert.assertTrue(sortedMapFactory.isSupported());
-    Assert.assertTrue(sortedMapFactory.needsStateTransfer(comparator));
-    SortedMap<String, Integer> sortedMapRoot = sortedMapFactory.newRootMap(comparator);
+    ContainerConstructors.RootTransferMapConstruction<SortedMapOnlyTreeMap>
+        rootTransferSortedMapConstruction =
+            assertRootTransferMapPlan(sortedMapFactory.newConstruction(comparator));
+    SortedMap<String, Integer> sortedMapRoot =
+        (SortedMap<String, Integer>) rootTransferSortedMapConstruction.newRootMap();
+    Assert.assertSame(rootTransferSortedMapConstruction.getRootType(), TreeMap.class);
     Assert.assertSame(sortedMapRoot.getClass(), TreeMap.class);
     Assert.assertSame(sortedMapRoot.comparator(), comparator);
 
     ContainerConstructors.SortedMapFactory<NoArgOnlyTreeMap> noArgFactory =
         ContainerConstructors.sortedMapFactory(NoArgOnlyTreeMap.class, TreeMap.class);
     Assert.assertTrue(noArgFactory.isSupported());
-    Assert.assertFalse(noArgFactory.needsStateTransfer(null));
-    Assert.assertNull(noArgFactory.newMap(null).comparator());
+    ContainerConstructors.DirectMapConstruction<NoArgOnlyTreeMap> directNoArgConstruction =
+        assertDirectMapPlan(noArgFactory.newConstruction(null));
+    Assert.assertNull(directNoArgConstruction.newMap().comparator());
 
     ContainerConstructors.SortedMapFactory<MapOnlyConcurrentSkipListMap> mapFactory =
         ContainerConstructors.sortedMapFactory(
             MapOnlyConcurrentSkipListMap.class, ConcurrentSkipListMap.class);
     Assert.assertTrue(mapFactory.isSupported());
-    Assert.assertTrue(mapFactory.needsStateTransfer(null));
-    SortedMap<String, Integer> concurrentRoot = mapFactory.newRootMap(null);
-    Assert.assertSame(mapFactory.getRootType(), ConcurrentSkipListMap.class);
+    ContainerConstructors.RootTransferMapConstruction<MapOnlyConcurrentSkipListMap>
+        rootTransferMapConstruction = assertRootTransferMapPlan(mapFactory.newConstruction(null));
+    SortedMap<String, Integer> concurrentRoot =
+        (SortedMap<String, Integer>) rootTransferMapConstruction.newRootMap();
+    Assert.assertSame(rootTransferMapConstruction.getRootType(), ConcurrentSkipListMap.class);
     Assert.assertSame(concurrentRoot.getClass(), ConcurrentSkipListMap.class);
     Assert.assertNull(concurrentRoot.comparator());
   }
@@ -280,7 +325,7 @@ public class ContainerConstructorsTest {
     UnsupportedOperationException comparatorException =
         Assert.expectThrows(
             UnsupportedOperationException.class,
-            () -> mapFactory.needsStateTransfer(new ReverseStringComparator()));
+            () -> mapFactory.newConstruction(new ReverseStringComparator()));
     Assert.assertTrue(
         comparatorException.getMessage().contains("comparator-preserving constructor"));
     Assert.assertTrue(
@@ -305,32 +350,41 @@ public class ContainerConstructorsTest {
         capacityComparatorFactory =
             ContainerConstructors.priorityQueueFactory(CapacityComparatorPriorityQueue.class);
     Assert.assertTrue(capacityComparatorFactory.isSupported());
-    Assert.assertFalse(capacityComparatorFactory.needsStateTransfer(comparator, 5));
-    Assert.assertSame(capacityComparatorFactory.getRootType(), PriorityQueue.class);
+    ContainerConstructors.DirectCollectionConstruction<CapacityComparatorPriorityQueue>
+        directCapacityComparatorConstruction =
+            assertDirectCollectionPlan(capacityComparatorFactory.newConstruction(comparator, 5));
     CapacityComparatorPriorityQueue capacityComparatorQueue =
-        capacityComparatorFactory.newCollection(comparator, 5);
+        directCapacityComparatorConstruction.newCollection();
     Assert.assertEquals(capacityComparatorQueue.seenCapacity, 5);
     Assert.assertSame(capacityComparatorQueue.seenComparator, comparator);
 
     ContainerConstructors.PriorityQueueFactory<ComparatorOnlyPriorityQueue> comparatorFactory =
         ContainerConstructors.priorityQueueFactory(ComparatorOnlyPriorityQueue.class);
     Assert.assertTrue(comparatorFactory.isSupported());
-    Assert.assertFalse(comparatorFactory.needsStateTransfer(comparator, 0));
-    ComparatorOnlyPriorityQueue comparatorQueue = comparatorFactory.newCollection(comparator, 0);
+    ContainerConstructors.DirectCollectionConstruction<ComparatorOnlyPriorityQueue>
+        directComparatorConstruction =
+            assertDirectCollectionPlan(comparatorFactory.newConstruction(comparator, 0));
+    ComparatorOnlyPriorityQueue comparatorQueue = directComparatorConstruction.newCollection();
     Assert.assertSame(comparatorQueue.seenComparator, comparator);
 
     ContainerConstructors.PriorityQueueFactory<NoArgOnlyPriorityQueue> noArgFactory =
         ContainerConstructors.priorityQueueFactory(NoArgOnlyPriorityQueue.class);
     Assert.assertTrue(noArgFactory.isSupported());
-    Assert.assertFalse(noArgFactory.needsStateTransfer(null, 0));
-    Assert.assertNull(noArgFactory.newCollection(null, 0).comparator());
+    ContainerConstructors.DirectCollectionConstruction<NoArgOnlyPriorityQueue>
+        directNoArgConstruction = assertDirectCollectionPlan(noArgFactory.newConstruction(null, 0));
+    Assert.assertNull(directNoArgConstruction.newCollection().comparator());
 
     ContainerConstructors.PriorityQueueFactory<CapacityOnlyPriorityQueue> capacityFactory =
         ContainerConstructors.priorityQueueFactory(CapacityOnlyPriorityQueue.class);
     Assert.assertTrue(capacityFactory.isSupported());
-    Assert.assertFalse(capacityFactory.needsStateTransfer(null, 0));
-    Assert.assertEquals(capacityFactory.newCollection(null, 0).seenCapacity, 1);
-    Assert.assertEquals(capacityFactory.newCollection(null, 7).seenCapacity, 7);
+    ContainerConstructors.DirectCollectionConstruction<CapacityOnlyPriorityQueue>
+        directMinCapacityConstruction =
+            assertDirectCollectionPlan(capacityFactory.newConstruction(null, 0));
+    Assert.assertEquals(directMinCapacityConstruction.newCollection().seenCapacity, 1);
+    ContainerConstructors.DirectCollectionConstruction<CapacityOnlyPriorityQueue>
+        directSizedConstruction =
+            assertDirectCollectionPlan(capacityFactory.newConstruction(null, 7));
+    Assert.assertEquals(directSizedConstruction.newCollection().seenCapacity, 7);
   }
 
   @Test
@@ -340,30 +394,42 @@ public class ContainerConstructorsTest {
         priorityQueueFactory =
             ContainerConstructors.priorityQueueFactory(PriorityQueueOnlyPriorityQueue.class);
     Assert.assertTrue(priorityQueueFactory.isSupported());
-    Assert.assertTrue(priorityQueueFactory.needsStateTransfer(comparator, 3));
-    PriorityQueue<String> priorityQueueRoot = priorityQueueFactory.newRootCollection(comparator, 3);
+    ContainerConstructors.RootTransferCollectionConstruction<PriorityQueueOnlyPriorityQueue>
+        rootTransferPriorityQueueConstruction =
+            assertRootTransferCollectionPlan(priorityQueueFactory.newConstruction(comparator, 3));
+    PriorityQueue<String> priorityQueueRoot =
+        (PriorityQueue<String>) rootTransferPriorityQueueConstruction.newRootCollection();
+    Assert.assertSame(rootTransferPriorityQueueConstruction.getRootType(), PriorityQueue.class);
     Assert.assertSame(priorityQueueRoot.getClass(), PriorityQueue.class);
     Assert.assertSame(priorityQueueRoot.comparator(), comparator);
 
     ContainerConstructors.PriorityQueueFactory<SortedSetOnlyPriorityQueue> sortedSetFactory =
         ContainerConstructors.priorityQueueFactory(SortedSetOnlyPriorityQueue.class);
     Assert.assertTrue(sortedSetFactory.isSupported());
-    Assert.assertTrue(sortedSetFactory.needsStateTransfer(comparator, 3));
-    PriorityQueue<String> sortedSetRoot = sortedSetFactory.newRootCollection(comparator, 3);
+    ContainerConstructors.RootTransferCollectionConstruction<SortedSetOnlyPriorityQueue>
+        rootTransferSortedSetConstruction =
+            assertRootTransferCollectionPlan(sortedSetFactory.newConstruction(comparator, 3));
+    PriorityQueue<String> sortedSetRoot =
+        (PriorityQueue<String>) rootTransferSortedSetConstruction.newRootCollection();
     Assert.assertSame(sortedSetRoot.getClass(), PriorityQueue.class);
     Assert.assertSame(sortedSetRoot.comparator(), comparator);
 
     ContainerConstructors.PriorityQueueFactory<CollectionOnlyPriorityQueue> collectionFactory =
         ContainerConstructors.priorityQueueFactory(CollectionOnlyPriorityQueue.class);
     Assert.assertTrue(collectionFactory.isSupported());
-    Assert.assertTrue(collectionFactory.needsStateTransfer(null, 0));
-    PriorityQueue<String> collectionRoot = collectionFactory.newRootCollection(null, 0);
+    ContainerConstructors.RootTransferCollectionConstruction<CollectionOnlyPriorityQueue>
+        rootTransferCollectionConstruction =
+            assertRootTransferCollectionPlan(collectionFactory.newConstruction(null, 0));
+    PriorityQueue<String> collectionRoot =
+        (PriorityQueue<String>) rootTransferCollectionConstruction.newRootCollection();
     Assert.assertSame(collectionRoot.getClass(), PriorityQueue.class);
     Assert.assertNull(collectionRoot.comparator());
 
-    Assert.assertTrue(collectionFactory.needsStateTransfer(comparator, 3));
+    ContainerConstructors.RootTransferCollectionConstruction<CollectionOnlyPriorityQueue>
+        rootTransferComparatorCollectionConstruction =
+            assertRootTransferCollectionPlan(collectionFactory.newConstruction(comparator, 3));
     PriorityQueue<String> comparatorCollectionRoot =
-        collectionFactory.newRootCollection(comparator, 3);
+        (PriorityQueue<String>) rootTransferComparatorCollectionConstruction.newRootCollection();
     Assert.assertSame(comparatorCollectionRoot.getClass(), PriorityQueue.class);
     Assert.assertSame(comparatorCollectionRoot.comparator(), comparator);
   }
