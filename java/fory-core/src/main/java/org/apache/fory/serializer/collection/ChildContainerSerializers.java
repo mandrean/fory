@@ -26,16 +26,26 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.PriorityQueue;
 import java.util.Set;
+import java.util.SortedMap;
+import java.util.SortedSet;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.Vector;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.ConcurrentSkipListSet;
 import org.apache.fory.builder.LayerMarkerClassGenerator;
+import org.apache.fory.collection.CollectionSnapshot;
+import org.apache.fory.collection.MapSnapshot;
 import org.apache.fory.context.CopyContext;
 import org.apache.fory.context.MetaReadContext;
 import org.apache.fory.context.ReadContext;
@@ -65,63 +75,121 @@ import org.apache.fory.util.Preconditions;
 public class ChildContainerSerializers {
 
   public static Class<? extends Serializer> getCollectionSerializerClass(Class<?> cls) {
-    if (ChildCollectionSerializer.superClasses.contains(cls)) {
+    if (ChildCollectionSerializer.superClasses.contains(cls)
+        || cls == TreeSet.class
+        || cls == ConcurrentSkipListSet.class
+        || cls == PriorityQueue.class) {
       return null;
     }
     if (ClassResolver.useReplaceResolveSerializer(cls)) {
       return null;
     }
-    // Collection/Map must have default constructor to be invoked by fory, otherwise created object
-    // can't be used to adding elements.
-    // For example: `new ArrayList<Integer> { add(1);}`, without default constructor, created
-    // list will have elementData as null, adding elements will raise NPE.
-    if (!ReflectionUtils.hasNoArgConstructor(cls)) {
-      return null;
-    }
-    while (cls != Object.class) {
-      if (ChildCollectionSerializer.superClasses.contains(cls)) {
-        if (cls == ArrayList.class) {
-          return ChildArrayListSerializer.class;
-        } else {
-          return ChildCollectionSerializer.class;
-        }
-      } else {
-        if (JavaSerializer.getReadRefMethod(cls, false) != null
-            || JavaSerializer.getWriteObjectMethod(cls, false) != null) {
+    Class<?> type = cls;
+    while (type != Object.class) {
+      if (ChildCollectionSerializer.superClasses.contains(type)) {
+        // Collection/Map must have default constructor to be invoked by fory, otherwise created
+        // object can't be used to adding elements.
+        // For example: `new ArrayList<Integer> { add(1);}`, without default constructor, created
+        // list will have elementData as null, adding elements will raise NPE.
+        if (!ReflectionUtils.hasNoArgConstructor(cls)) {
           return null;
         }
+        if (type == ArrayList.class) {
+          return ChildArrayListSerializer.class;
+        }
+        return ChildCollectionSerializer.class;
       }
-      cls = cls.getSuperclass();
+      if (type == TreeSet.class) {
+        return hasSupportedSortedSetConstructor(cls, TreeSet.class)
+            ? ChildSortedSetSerializer.class
+            : null;
+      }
+      if (type == ConcurrentSkipListSet.class) {
+        return hasSupportedSortedSetConstructor(cls, ConcurrentSkipListSet.class)
+            ? ChildConcurrentSkipListSetSerializer.class
+            : null;
+      }
+      if (type == PriorityQueue.class) {
+        return hasSupportedPriorityQueueConstructor(cls)
+            ? ChildPriorityQueueSerializer.class
+            : null;
+      }
+      if (JavaSerializer.getReadRefMethod(type, false) != null
+          || JavaSerializer.getWriteObjectMethod(type, false) != null) {
+        return null;
+      }
+      type = type.getSuperclass();
     }
     return null;
   }
 
   public static Class<? extends Serializer> getMapSerializerClass(Class<?> cls) {
-    if (ChildMapSerializer.superClasses.contains(cls)) {
+    if (ChildMapSerializer.superClasses.contains(cls)
+        || cls == TreeMap.class
+        || cls == ConcurrentSkipListMap.class) {
       return null;
     }
     if (ClassResolver.useReplaceResolveSerializer(cls)) {
       return null;
     }
-    // Collection/Map must have default constructor to be invoked by fory, otherwise created object
-    // can't be used to adding elements.
-    // For example: `new ArrayList<Integer> { add(1);}`, without default constructor, created
-    // list will have elementData as null, adding elements will raise NPE.
-    if (!ReflectionUtils.hasNoArgConstructor(cls)) {
-      return null;
-    }
-    while (cls != Object.class) {
-      if (ChildMapSerializer.superClasses.contains(cls)) {
-        return ChildMapSerializer.class;
-      } else {
-        if (JavaSerializer.getReadRefMethod(cls, false) != null
-            || JavaSerializer.getWriteObjectMethod(cls, false) != null) {
+    Class<?> type = cls;
+    while (type != Object.class) {
+      if (ChildMapSerializer.superClasses.contains(type)) {
+        // Collection/Map must have default constructor to be invoked by fory, otherwise created
+        // object can't be used to adding elements.
+        // For example: `new ArrayList<Integer> { add(1);}`, without default constructor, created
+        // list will have elementData as null, adding elements will raise NPE.
+        if (!ReflectionUtils.hasNoArgConstructor(cls)) {
           return null;
         }
+        return ChildMapSerializer.class;
       }
-      cls = cls.getSuperclass();
+      if (type == TreeMap.class) {
+        return hasSupportedSortedMapConstructor(cls, TreeMap.class)
+            ? ChildSortedMapSerializer.class
+            : null;
+      }
+      if (type == ConcurrentSkipListMap.class) {
+        return hasSupportedSortedMapConstructor(cls, ConcurrentSkipListMap.class)
+            ? ChildConcurrentSkipListMapSerializer.class
+            : null;
+      }
+      if (JavaSerializer.getReadRefMethod(type, false) != null
+          || JavaSerializer.getWriteObjectMethod(type, false) != null) {
+        return null;
+      }
+      type = type.getSuperclass();
     }
     return null;
+  }
+
+  private static boolean hasSupportedSortedSetConstructor(
+      Class<?> cls, Class<? extends SortedSet> rootType) {
+    try {
+      ContainerConstructors.sortedSetFactory((Class) cls, rootType);
+      return true;
+    } catch (UnsupportedOperationException e) {
+      return false;
+    }
+  }
+
+  private static boolean hasSupportedSortedMapConstructor(
+      Class<?> cls, Class<? extends SortedMap> rootType) {
+    try {
+      ContainerConstructors.sortedMapFactory((Class) cls, rootType);
+      return true;
+    } catch (UnsupportedOperationException e) {
+      return false;
+    }
+  }
+
+  private static boolean hasSupportedPriorityQueueConstructor(Class<?> cls) {
+    try {
+      ContainerConstructors.priorityQueueFactory((Class) cls);
+      return true;
+    } catch (UnsupportedOperationException e) {
+      return false;
+    }
   }
 
   /**
@@ -187,6 +255,172 @@ public class ChildContainerSerializers {
     }
   }
 
+  public static class ChildSortedSetSerializer<T extends SortedSet>
+      extends CollectionSerializer<T> {
+    public static Set<Class<?>> superClasses = ofHashSet(TreeSet.class);
+    private final ContainerConstructors.SortedSetFactory<T> constructorFactory;
+    private final Serializer[] slotsSerializers;
+    private SerializationFieldInfo[] fieldInfos;
+
+    public ChildSortedSetSerializer(TypeResolver typeResolver, Class<T> cls) {
+      super(typeResolver, cls, true);
+      constructorFactory = ContainerConstructors.sortedSetFactory(cls, TreeSet.class);
+      slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
+    }
+
+    @Override
+    public Collection onCollectionWrite(WriteContext writeContext, T value) {
+      MemoryBuffer buffer = writeContext.getBuffer();
+      buffer.writeVarUint32Small7(value.size());
+      if (!config.isXlang()) {
+        writeContext.writeRef(value.comparator());
+      }
+      writeSlots(writeContext, value, slotsSerializers);
+      return value;
+    }
+
+    @Override
+    public Collection newCollection(ReadContext readContext) {
+      assert !config.isXlang();
+      MemoryBuffer buffer = readContext.getBuffer();
+      int numElements = buffer.readVarUint32Small7();
+      setNumElements(numElements);
+      Comparator comparator = (Comparator) readContext.readRef();
+      T collection = constructorFactory.newCollection(comparator);
+      readContext.reference(collection);
+      readAndSetFields(readContext, typeResolver, collection, slotsSerializers);
+      return collection;
+    }
+
+    @Override
+    public Collection newCollection(CopyContext copyContext, Collection originCollection) {
+      T newCollection =
+          constructorFactory.newCollection(
+              copyContext.copyObject(((SortedSet) originCollection).comparator()));
+      fieldInfos =
+          copyFields(
+              copyContext,
+              typeResolver,
+              type,
+              superClasses,
+              fieldInfos,
+              originCollection,
+              newCollection);
+      return newCollection;
+    }
+  }
+
+  public static class ChildConcurrentSkipListSetSerializer<T extends ConcurrentSkipListSet>
+      extends ConcurrentCollectionSerializer<T> {
+    public static Set<Class<?>> superClasses = ofHashSet(ConcurrentSkipListSet.class);
+    private final ContainerConstructors.SortedSetFactory<T> constructorFactory;
+    private final Serializer[] slotsSerializers;
+    private SerializationFieldInfo[] fieldInfos;
+
+    public ChildConcurrentSkipListSetSerializer(TypeResolver typeResolver, Class<T> cls) {
+      super(typeResolver, cls, true);
+      constructorFactory = ContainerConstructors.sortedSetFactory(cls, ConcurrentSkipListSet.class);
+      slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
+    }
+
+    @Override
+    public CollectionSnapshot onCollectionWrite(WriteContext writeContext, T value) {
+      CollectionSnapshot snapshot = super.onCollectionWrite(writeContext, value);
+      if (!config.isXlang()) {
+        writeContext.writeRef(value.comparator());
+      }
+      writeSlots(writeContext, value, slotsSerializers);
+      return snapshot;
+    }
+
+    @Override
+    public Collection newCollection(ReadContext readContext) {
+      assert !config.isXlang();
+      MemoryBuffer buffer = readContext.getBuffer();
+      int numElements = buffer.readVarUint32Small7();
+      setNumElements(numElements);
+      int refId = readContext.lastPreservedRefId();
+      Comparator comparator = (Comparator) readContext.readRef();
+      T collection = constructorFactory.newCollection(comparator);
+      readContext.setReadRef(refId, collection);
+      readAndSetFields(readContext, typeResolver, collection, slotsSerializers);
+      return collection;
+    }
+
+    @Override
+    public Collection newCollection(CopyContext copyContext, Collection originCollection) {
+      T newCollection =
+          constructorFactory.newCollection(
+              copyContext.copyObject(((SortedSet) originCollection).comparator()));
+      fieldInfos =
+          copyFields(
+              copyContext,
+              typeResolver,
+              type,
+              superClasses,
+              fieldInfos,
+              originCollection,
+              newCollection);
+      return newCollection;
+    }
+  }
+
+  public static class ChildPriorityQueueSerializer<T extends PriorityQueue>
+      extends CollectionSerializer<T> {
+    public static Set<Class<?>> superClasses = ofHashSet(PriorityQueue.class);
+    private final ContainerConstructors.PriorityQueueFactory<T> constructorFactory;
+    private final Serializer[] slotsSerializers;
+    private SerializationFieldInfo[] fieldInfos;
+
+    public ChildPriorityQueueSerializer(TypeResolver typeResolver, Class<T> cls) {
+      super(typeResolver, cls, true);
+      constructorFactory = ContainerConstructors.priorityQueueFactory(cls);
+      slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
+    }
+
+    @Override
+    public Collection onCollectionWrite(WriteContext writeContext, T value) {
+      MemoryBuffer buffer = writeContext.getBuffer();
+      buffer.writeVarUint32Small7(value.size());
+      if (!config.isXlang()) {
+        writeContext.writeRef(value.comparator());
+      }
+      writeSlots(writeContext, value, slotsSerializers);
+      return value;
+    }
+
+    @Override
+    public Collection newCollection(ReadContext readContext) {
+      assert !config.isXlang();
+      MemoryBuffer buffer = readContext.getBuffer();
+      int numElements = buffer.readVarUint32Small7();
+      setNumElements(numElements);
+      Comparator comparator = (Comparator) readContext.readRef();
+      T collection = constructorFactory.newCollection(comparator, numElements);
+      readContext.reference(collection);
+      readAndSetFields(readContext, typeResolver, collection, slotsSerializers);
+      return collection;
+    }
+
+    @Override
+    public Collection newCollection(CopyContext copyContext, Collection originCollection) {
+      T newCollection =
+          constructorFactory.newCollection(
+              copyContext.copyObject(((PriorityQueue) originCollection).comparator()),
+              originCollection.size());
+      fieldInfos =
+          copyFields(
+              copyContext,
+              typeResolver,
+              type,
+              superClasses,
+              fieldInfos,
+              originCollection,
+              newCollection);
+      return newCollection;
+    }
+  }
+
   /**
    * Serializer for subclasses of {@link ChildMapSerializer#superClasses} if no jdk custom
    * serialization in those classes.
@@ -234,6 +468,120 @@ public class ChildContainerSerializers {
     }
   }
 
+  public static class ChildSortedMapSerializer<T extends SortedMap> extends MapSerializer<T> {
+    public static Set<Class<?>> superClasses = ofHashSet(TreeMap.class);
+    private final ContainerConstructors.SortedMapFactory<T> constructorFactory;
+    private final Serializer[] slotsSerializers;
+    private SerializationFieldInfo[] fieldInfos;
+
+    public ChildSortedMapSerializer(TypeResolver typeResolver, Class<T> cls) {
+      super(typeResolver, cls, true);
+      constructorFactory = ContainerConstructors.sortedMapFactory(cls, TreeMap.class);
+      slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
+    }
+
+    @Override
+    public Map onMapWrite(WriteContext writeContext, T value) {
+      MemoryBuffer buffer = writeContext.getBuffer();
+      buffer.writeVarUint32Small7(value.size());
+      if (!config.isXlang()) {
+        writeContext.writeRef(value.comparator());
+      }
+      writeSlots(writeContext, value, slotsSerializers);
+      return value;
+    }
+
+    @Override
+    public Map newMap(ReadContext readContext) {
+      assert !config.isXlang();
+      MemoryBuffer buffer = readContext.getBuffer();
+      setNumElements(buffer.readVarUint32Small7());
+      Comparator comparator = (Comparator) readContext.readRef();
+      T map = constructorFactory.newMap(comparator);
+      readContext.reference(map);
+      readAndSetFields(readContext, typeResolver, map, slotsSerializers);
+      return map;
+    }
+
+    @Override
+    public Map newMap(CopyContext copyContext, Map originMap) {
+      T newMap =
+          constructorFactory.newMap(copyContext.copyObject(((SortedMap) originMap).comparator()));
+      fieldInfos =
+          copyFields(copyContext, typeResolver, type, superClasses, fieldInfos, originMap, newMap);
+      return newMap;
+    }
+  }
+
+  public static class ChildConcurrentSkipListMapSerializer<T extends ConcurrentSkipListMap>
+      extends ConcurrentMapSerializer<T> {
+    public static Set<Class<?>> superClasses = ofHashSet(ConcurrentSkipListMap.class);
+    private final ContainerConstructors.SortedMapFactory<T> constructorFactory;
+    private final Serializer[] slotsSerializers;
+    private SerializationFieldInfo[] fieldInfos;
+
+    public ChildConcurrentSkipListMapSerializer(TypeResolver typeResolver, Class<T> cls) {
+      super(typeResolver, cls, true);
+      constructorFactory = ContainerConstructors.sortedMapFactory(cls, ConcurrentSkipListMap.class);
+      slotsSerializers = buildSlotsSerializers(typeResolver, superClasses, cls);
+    }
+
+    @Override
+    public MapSnapshot onMapWrite(WriteContext writeContext, T value) {
+      MapSnapshot snapshot = super.onMapWrite(writeContext, value);
+      if (!config.isXlang()) {
+        writeContext.writeRef(value.comparator());
+      }
+      writeSlots(writeContext, value, slotsSerializers);
+      return snapshot;
+    }
+
+    @Override
+    public Map newMap(ReadContext readContext) {
+      assert !config.isXlang();
+      MemoryBuffer buffer = readContext.getBuffer();
+      setNumElements(buffer.readVarUint32Small7());
+      int refId = readContext.lastPreservedRefId();
+      Comparator comparator = (Comparator) readContext.readRef();
+      T map = constructorFactory.newMap(comparator);
+      readContext.setReadRef(refId, map);
+      readAndSetFields(readContext, typeResolver, map, slotsSerializers);
+      return map;
+    }
+
+    @Override
+    public Map newMap(CopyContext copyContext, Map originMap) {
+      T newMap =
+          constructorFactory.newMap(copyContext.copyObject(((SortedMap) originMap).comparator()));
+      fieldInfos =
+          copyFields(copyContext, typeResolver, type, superClasses, fieldInfos, originMap, newMap);
+      return newMap;
+    }
+  }
+
+  private static void writeSlots(
+      WriteContext writeContext, Object value, Serializer[] slotsSerializers) {
+    for (Serializer slotsSerializer : slotsSerializers) {
+      slotsSerializer.write(writeContext, value);
+    }
+  }
+
+  private static SerializationFieldInfo[] copyFields(
+      CopyContext copyContext,
+      TypeResolver typeResolver,
+      Class<?> type,
+      Set<Class<?>> superClasses,
+      SerializationFieldInfo[] fieldInfos,
+      Object origin,
+      Object target) {
+    if (fieldInfos == null) {
+      List<Field> fields = ReflectionUtils.getFieldsWithoutSuperClasses(type, superClasses);
+      fieldInfos = FieldGroups.buildFieldsInfo(typeResolver, fields).allFields;
+    }
+    AbstractObjectSerializer.copyFields(copyContext, fieldInfos, origin, target);
+    return fieldInfos;
+  }
+
   private static <T> Serializer[] buildSlotsSerializers(
       TypeResolver typeResolver, Set<Class<?>> superClasses, Class<T> cls) {
     Preconditions.checkArgument(!superClasses.contains(cls));
@@ -243,8 +591,6 @@ public class ChildContainerSerializers {
       Serializer slotsSerializer;
       if (typeResolver.getConfig().isCompatible()) {
         TypeDef layerTypeDef = typeResolver.getTypeDef(cls, false);
-        // Use layer index within class hierarchy (not global counter)
-        // This ensures unique marker classes for each layer
         Class<?> layerMarkerClass = LayerMarkerClassGenerator.getOrCreate(cls, layerIndex);
         slotsSerializer =
             new MetaSharedLayerSerializer(typeResolver, cls, layerTypeDef, layerMarkerClass);
@@ -267,8 +613,6 @@ public class ChildContainerSerializers {
     for (Serializer slotsSerializer : slotsSerializers) {
       if (slotsSerializer instanceof MetaSharedLayerSerializer) {
         MetaSharedLayerSerializer metaSerializer = (MetaSharedLayerSerializer) slotsSerializer;
-        // Read layer class meta first if meta share is enabled
-        // This corresponds to writeLayerClassMeta() in MetaSharedLayerSerializer.write()
         if (typeResolver.getConfig().isMetaShareEnabled()) {
           readAndSkipLayerClassMeta(readContext);
         }
@@ -295,16 +639,10 @@ public class ChildContainerSerializers {
     boolean isRef = (indexMarker & 1) == 1;
     int index = indexMarker >>> 1;
     if (isRef) {
-      // Reference to previously read type - nothing more to read
       return;
     }
-    // New type - need to read and skip the TypeDef bytes
     long id = buffer.readInt64();
     TypeDef.skipTypeDef(buffer, id);
-    // Add a placeholder to keep readTypeInfos indices in sync with the write side's classMap.
-    // The write side (writeLayerClassMeta) adds layer marker classes to classMap which shares
-    // the same index space as writeSharedClassMeta. Without this placeholder, subsequent
-    // readSharedClassMeta reference lookups would use wrong indices.
     metaReadContext.readTypeInfos.add(null);
   }
 }

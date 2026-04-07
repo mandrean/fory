@@ -416,6 +416,18 @@ public class CollectionSerializersTest extends ForyTestBase {
     }
   }
 
+  public static class ChildTreeSetWithCollectionConstructor extends TreeSet<String> {
+    public ChildTreeSetWithCollectionConstructor(Collection<? extends String> values) {
+      super(values);
+    }
+  }
+
+  public static class ChildTreeSetWithSortedSetConstructor extends TreeSet<String> {
+    public ChildTreeSetWithSortedSetConstructor(SortedSet<String> values) {
+      super(values);
+    }
+  }
+
   @Test(dataProvider = "referenceTrackingConfig")
   public void testSortedSetSubclassWithoutComparatorCtor(boolean referenceTrackingConfig) {
     Fory fory =
@@ -494,6 +506,50 @@ public class CollectionSerializersTest extends ForyTestBase {
     ChildTreeSetWithComparator deserialized = serDe(fory, set);
     assertEquals(deserialized, set);
     assertEquals(deserialized.getClass(), ChildTreeSetWithComparator.class);
+  }
+
+  @Test(dataProvider = "referenceTrackingConfig")
+  public void testSortedSetSubclassWithCollectionRegisteredWithSortedSetSerializer(
+      boolean referenceTrackingConfig) {
+    Fory fory =
+        Fory.builder()
+            .withLanguage(Language.JAVA)
+            .withRefTracking(referenceTrackingConfig)
+            .requireClassRegistration(false)
+            .build();
+    fory.registerSerializer(
+        ChildTreeSetWithCollectionConstructor.class,
+        new CollectionSerializers.SortedSetSerializer<>(
+            fory.getTypeResolver(), ChildTreeSetWithCollectionConstructor.class));
+    ChildTreeSetWithCollectionConstructor set =
+        new ChildTreeSetWithCollectionConstructor(ImmutableList.of("b", "a", "c"));
+    ChildTreeSetWithCollectionConstructor deserialized = serDe(fory, set);
+    assertEquals(deserialized, set);
+    assertEquals(deserialized.getClass(), ChildTreeSetWithCollectionConstructor.class);
+    Assert.assertNull(deserialized.comparator());
+  }
+
+  @Test(dataProvider = "referenceTrackingConfig")
+  public void testSortedSetSubclassWithSortedSetRegisteredWithSortedSetSerializer(
+      boolean referenceTrackingConfig) {
+    Fory fory =
+        Fory.builder()
+            .withLanguage(Language.JAVA)
+            .withRefTracking(referenceTrackingConfig)
+            .requireClassRegistration(false)
+            .build();
+    fory.registerSerializer(
+        ChildTreeSetWithSortedSetConstructor.class,
+        new CollectionSerializers.SortedSetSerializer<>(
+            fory.getTypeResolver(), ChildTreeSetWithSortedSetConstructor.class));
+    TreeSet<String> source = new TreeSet<>(Comparator.reverseOrder());
+    source.addAll(ImmutableList.of("b", "a", "c"));
+    ChildTreeSetWithSortedSetConstructor set = new ChildTreeSetWithSortedSetConstructor(source);
+    ChildTreeSetWithSortedSetConstructor deserialized = serDe(fory, set);
+    assertEquals(deserialized, set);
+    assertEquals(deserialized.getClass(), ChildTreeSetWithSortedSetConstructor.class);
+    Assert.assertNotNull(deserialized.comparator());
+    Assert.assertTrue(deserialized.comparator().compare("a", "b") > 0);
   }
 
   @Test

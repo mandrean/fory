@@ -470,6 +470,18 @@ public class MapSerializersTest extends ForyTestBase {
     }
   }
 
+  public static class ChildTreeMapWithMapConstructor extends TreeMap<String, String> {
+    public ChildTreeMapWithMapConstructor(Map<? extends String, ? extends String> values) {
+      super(values);
+    }
+  }
+
+  public static class ChildTreeMapWithSortedMapConstructor extends TreeMap<String, String> {
+    public ChildTreeMapWithSortedMapConstructor(SortedMap<String, ? extends String> values) {
+      super(values);
+    }
+  }
+
   @Test(dataProvider = "referenceTrackingConfig")
   public void testSortedMapSubclassWithoutComparatorCtor(boolean referenceTrackingConfig) {
     Fory fory =
@@ -545,6 +557,51 @@ public class MapSerializersTest extends ForyTestBase {
     ChildTreeMapWithComparator deserialized = serDe(fory, map);
     assertEquals(deserialized, map);
     assertEquals(deserialized.getClass(), ChildTreeMapWithComparator.class);
+  }
+
+  @Test(dataProvider = "referenceTrackingConfig")
+  public void testSortedMapSubclassWithMapRegisteredWithSortedMapSerializer(
+      boolean referenceTrackingConfig) {
+    Fory fory =
+        builder()
+            .withLanguage(Language.JAVA)
+            .withRefTracking(referenceTrackingConfig)
+            .requireClassRegistration(false)
+            .build();
+    fory.registerSerializer(
+        ChildTreeMapWithMapConstructor.class,
+        new MapSerializers.SortedMapSerializer<>(
+            fory.getTypeResolver(), ChildTreeMapWithMapConstructor.class));
+    ChildTreeMapWithMapConstructor map =
+        new ChildTreeMapWithMapConstructor(ImmutableMap.of("b", "B", "a", "A"));
+    ChildTreeMapWithMapConstructor deserialized = serDe(fory, map);
+    assertEquals(deserialized, map);
+    assertEquals(deserialized.getClass(), ChildTreeMapWithMapConstructor.class);
+    Assert.assertNull(deserialized.comparator());
+  }
+
+  @Test(dataProvider = "referenceTrackingConfig")
+  public void testSortedMapSubclassWithSortedMapRegisteredWithSortedMapSerializer(
+      boolean referenceTrackingConfig) {
+    Fory fory =
+        builder()
+            .withLanguage(Language.JAVA)
+            .withRefTracking(referenceTrackingConfig)
+            .requireClassRegistration(false)
+            .build();
+    fory.registerSerializer(
+        ChildTreeMapWithSortedMapConstructor.class,
+        new MapSerializers.SortedMapSerializer<>(
+            fory.getTypeResolver(), ChildTreeMapWithSortedMapConstructor.class));
+    TreeMap<String, String> source = new TreeMap<>(Comparator.reverseOrder());
+    source.put("b", "B");
+    source.put("a", "A");
+    ChildTreeMapWithSortedMapConstructor map = new ChildTreeMapWithSortedMapConstructor(source);
+    ChildTreeMapWithSortedMapConstructor deserialized = serDe(fory, map);
+    assertEquals(deserialized, map);
+    assertEquals(deserialized.getClass(), ChildTreeMapWithSortedMapConstructor.class);
+    Assert.assertNotNull(deserialized.comparator());
+    Assert.assertTrue(deserialized.comparator().compare("a", "b") > 0);
   }
 
   @Test
