@@ -1,0 +1,9 @@
+variant,size,threshold_behavior,baseline_ops_per_second,new_ops_per_second,baseline_ns_per_op,new_ns_per_op
+baseTreeSet,4096,below_default_limit,2363.04,10766.38,423184.00,92881.69
+baseTreeMap,4096,below_default_limit,2235.76,7482.46,447275.27,133645.90
+childTreeSet,4096,below_default_limit,13205.71,11238.20,75724.83,88982.19
+childTreeMap,4096,below_default_limit,8756.60,7061.21,114199.63,141618.83
+baseTreeSet,40000,above_default_limit,173.44,1416.82,5765624.80,705806.88
+baseTreeMap,40000,above_default_limit,214.14,155.64,4669808.96,6425012.08
+childTreeSet,40000,above_default_limit,1434.15,1220.68,697275.00,819213.54
+childTreeMap,40000,above_default_limit,897.50,200.18,1114203.96,4995558.96

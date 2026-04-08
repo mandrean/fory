@@ -18,6 +18,15 @@ Don't skip **warm up**, otherwise the results aren't accurate.
  -f 1 -wi 3 -i 3 -t 1 -w 2s -r 2s -rf cs
 ```
 
+## Sorted Container Deserialize Guard
+
+The sorted-container bulk-read heap guard was validated with focused deserialize runs below and above the default `256 * 1024` byte threshold. Raw results are recorded in [data/sorted-container-deserialize.csv](data/sorted-container-deserialize.csv).
+
+Key takeaways:
+
+- `TreeSet` and `TreeMap` workloads that stay under the default threshold retain the bulk-build fast path and see strong deserialize gains.
+- Large sorted containers above the threshold fall back to incremental insertion, which avoids the temporary `Object[]` heap spike at the cost of mixed throughput, especially for `TreeMap` workloads.
+
 ## Benchmark Data
 
 ### Struct
