@@ -217,10 +217,14 @@ Fory fory = Fory.builder()
   // Performance options
   .withCodeGen(true)
   .withAsyncCompilation(true)
+  // Cap temporary TreeSet/TreeMap bulk-read buffers (0 disables the fast path)
+  .withSortedContainerBulkReadBufferLimitBytes(256 * 1024)
   // Class loader
   .withClassLoader(classLoader)
   .build();
 ```
+
+`withSortedContainerBulkReadBufferLimitBytes` defaults to `256 * 1024`. Lower it when deserializing very large sorted containers under heap pressure, or set it to `0` to force incremental insertion instead of temporary bulk buffers.
 
 See [Java Serialization Guide](../docs/guide/java_serialization_guide.md) for detailed configuration options.
 

@@ -227,12 +227,16 @@ public class ChildContainerSerializers {
     public static Set<Class<?>> superClasses = ofHashSet(TreeSet.class);
     private final ContainerConstructors.SortedSetFactory<T> constructorFactory;
     private final ChildCollectionSlots<T> childSlots;
+    private final boolean bulkReadEnabled;
+    private final int bulkReadBufferLimitBytes;
 
     public ChildSortedSetSerializer(TypeResolver typeResolver, Class<T> cls) {
       super(typeResolver, cls, true);
       constructorFactory = ContainerConstructors.sortedSetFactory(cls, TreeSet.class);
       constructorFactory.checkSupported();
       childSlots = new ChildCollectionSlots<>(typeResolver, superClasses, cls);
+      bulkReadEnabled = SortedContainerBulkAccess.canBulkReadSortedSet(cls);
+      bulkReadBufferLimitBytes = config.sortedContainerBulkReadBufferLimitBytes();
     }
 
     @Override
@@ -254,7 +258,12 @@ public class ChildContainerSerializers {
       setNumElements(numElements);
       Comparator comparator = (Comparator) readContext.readRef();
       return childSlots.readCollection(
-          readContext, constructorFactory.newConstruction(comparator), readContext::reference);
+          readContext,
+          constructorFactory.newConstruction(comparator),
+          readContext::reference,
+          numElements,
+          bulkReadEnabled,
+          bulkReadBufferLimitBytes);
     }
 
     @Override
@@ -424,12 +433,16 @@ public class ChildContainerSerializers {
     public static Set<Class<?>> superClasses = ofHashSet(TreeMap.class);
     private final ContainerConstructors.SortedMapFactory<T> constructorFactory;
     private final ChildMapSlots<T> childSlots;
+    private final boolean bulkReadEnabled;
+    private final int bulkReadBufferLimitBytes;
 
     public ChildSortedMapSerializer(TypeResolver typeResolver, Class<T> cls) {
       super(typeResolver, cls, true);
       constructorFactory = ContainerConstructors.sortedMapFactory(cls, TreeMap.class);
       constructorFactory.checkSupported();
       childSlots = new ChildMapSlots<>(typeResolver, superClasses, cls);
+      bulkReadEnabled = SortedContainerBulkAccess.canBulkReadSortedMap(cls);
+      bulkReadBufferLimitBytes = config.sortedContainerBulkReadBufferLimitBytes();
     }
 
     @Override
@@ -447,10 +460,16 @@ public class ChildContainerSerializers {
     public Map newMap(ReadContext readContext) {
       assert !config.isXlang();
       MemoryBuffer buffer = readContext.getBuffer();
-      setNumElements(buffer.readVarUint32Small7());
+      int numElements = buffer.readVarUint32Small7();
+      setNumElements(numElements);
       Comparator comparator = (Comparator) readContext.readRef();
       return childSlots.readMap(
-          readContext, constructorFactory.newConstruction(comparator), readContext::reference);
+          readContext,
+          constructorFactory.newConstruction(comparator),
+          readContext::reference,
+          numElements,
+          bulkReadEnabled,
+          bulkReadBufferLimitBytes);
     }
 
     @Override
@@ -557,8 +576,24 @@ public class ChildContainerSerializers {
         ReadContext readContext,
         ContainerConstructors.CollectionConstruction<T> construction,
         Consumer<T> registrar) {
+      return readCollection(readContext, construction, registrar, 0, false, 0);
+    }
+
+    private Collection readCollection(
+        ReadContext readContext,
+        ContainerConstructors.CollectionConstruction<T> construction,
+        Consumer<T> registrar,
+        int numElements,
+        boolean bulkReadEnabled,
+        int bulkReadBufferLimitBytes) {
       return ContainerTransfer.readCollection(
-          type, construction, registrar, target -> readInto(readContext, target));
+          type,
+          construction,
+          registrar,
+          target -> readInto(readContext, target),
+          numElements,
+          bulkReadEnabled,
+          bulkReadBufferLimitBytes);
     }
 
     private T copyCollection(
@@ -609,8 +644,24 @@ public class ChildContainerSerializers {
         ReadContext readContext,
         ContainerConstructors.MapConstruction<T> construction,
         Consumer<T> registrar) {
+      return readMap(readContext, construction, registrar, 0, false, 0);
+    }
+
+    private Map readMap(
+        ReadContext readContext,
+        ContainerConstructors.MapConstruction<T> construction,
+        Consumer<T> registrar,
+        int numElements,
+        boolean bulkReadEnabled,
+        int bulkReadBufferLimitBytes) {
       return ContainerTransfer.readMap(
-          type, construction, registrar, target -> readInto(readContext, target));
+          type,
+          construction,
+          registrar,
+          target -> readInto(readContext, target),
+          numElements,
+          bulkReadEnabled,
+          bulkReadBufferLimitBytes);
     }
 
     private T copyMap(
@@ -660,8 +711,8 @@ public class ChildContainerSerializers {
       Serializer slotsSerializer;
       if (typeResolver.getConfig().isCompatible()) {
         TypeDef layerTypeDef = typeResolver.getTypeDef(cls, false);
-        // Use layer index within class hierarchy, not a global counter, so each layer gets a
-        // stable marker class on both write and read paths.
+        // Use layer index within class hierarchy (not global counter)
+        // This ensures unique marker classes for each layer
         Class<?> layerMarkerClass = LayerMarkerClassGenerator.getOrCreate(cls, layerIndex);
         slotsSerializer =
             new MetaSharedLayerSerializer(typeResolver, cls, layerTypeDef, layerMarkerClass);
@@ -685,8 +736,8 @@ public class ChildContainerSerializers {
       if (slotsSerializer instanceof MetaSharedLayerSerializer) {
         MetaSharedLayerSerializer metaSerializer = (MetaSharedLayerSerializer) slotsSerializer;
         if (typeResolver.getConfig().isMetaShareEnabled()) {
-          // Read layer class meta first if meta share is enabled. This mirrors
-          // MetaSharedLayerSerializer.writeLayerClassMeta on the write side.
+          // Read layer class meta first if meta share is enabled
+          // This corresponds to writeLayerClassMeta() in MetaSharedLayerSerializer.write()
           readAndSkipLayerClassMeta(readContext);
         }
         metaSerializer.readAndSetFields(readContext, collection);
@@ -712,11 +763,11 @@ public class ChildContainerSerializers {
     boolean isRef = (indexMarker & 1) == 1;
     int index = indexMarker >>> 1;
     if (isRef) {
-      // Reference to a previously read layer marker type, so there are no TypeDef bytes to skip.
+      // Reference to previously read type - nothing more to read
       return;
     }
+    // New type - need to read and skip the TypeDef bytes
     long id = buffer.readInt64();
-    // New layer marker type, so skip over the serialized TypeDef payload.
     TypeDef.skipTypeDef(buffer, id);
     // Add a placeholder to keep readTypeInfos indices in sync with the write side's classMap.
     // The write side (writeLayerClassMeta) adds layer marker classes to classMap which shares

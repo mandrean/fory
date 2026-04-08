@@ -64,6 +64,7 @@ public class Config implements Serializable {
   private final UnknownEnumValueStrategy unknownEnumValueStrategy;
   private final boolean serializeEnumByName;
   private final int bufferSizeLimitBytes;
+  private final int sortedContainerBulkReadBufferLimitBytes;
   private final int maxDepth;
   private final float mapRefLoadFactor;
   private final boolean forVirtualThread;
@@ -106,6 +107,7 @@ public class Config implements Serializable {
     unknownEnumValueStrategy = builder.unknownEnumValueStrategy;
     serializeEnumByName = builder.serializeEnumByName;
     bufferSizeLimitBytes = builder.bufferSizeLimitBytes;
+    sortedContainerBulkReadBufferLimitBytes = builder.sortedContainerBulkReadBufferLimitBytes;
     maxDepth = builder.maxDepth;
     mapRefLoadFactor = builder.mapRefLoadFactor;
     forVirtualThread = builder.forVirtualThread;
@@ -223,6 +225,15 @@ public class Config implements Serializable {
     return bufferSizeLimitBytes;
   }
 
+  /**
+   * Returns the temporary buffer budget used for sorted-container bulk deserialization.
+   *
+   * <p>A value of {@code 0} disables the temporary bulk-read buffer entirely.
+   */
+  public int sortedContainerBulkReadBufferLimitBytes() {
+    return sortedContainerBulkReadBufferLimitBytes;
+  }
+
   public boolean requireClassRegistration() {
     return requireClassRegistration;
   }
@@ -337,6 +348,7 @@ public class Config implements Serializable {
         && compressIntArray == config.compressIntArray
         && compressLongArray == config.compressLongArray
         && bufferSizeLimitBytes == config.bufferSizeLimitBytes
+        && sortedContainerBulkReadBufferLimitBytes == config.sortedContainerBulkReadBufferLimitBytes
         && requireClassRegistration == config.requireClassRegistration
         && suppressClassRegistrationWarnings == config.suppressClassRegistrationWarnings
         && registerGuavaTypes == config.registerGuavaTypes
@@ -376,6 +388,7 @@ public class Config implements Serializable {
         compressIntArray,
         compressLongArray,
         bufferSizeLimitBytes,
+        sortedContainerBulkReadBufferLimitBytes,
         requireClassRegistration,
         suppressClassRegistrationWarnings,
         registerGuavaTypes,

@@ -764,10 +764,10 @@ public abstract class TypeResolver {
     int index = indexMarker >>> 1;
     TypeInfo typeInfo;
     if (isRef) {
-      // Reference to previously read type in this stream
+      // Reference to previously read type - nothing more to read
       typeInfo = metaReadContext.readTypeInfos.get(index);
     } else {
-      // New type in stream - but may already be known from registry
+      // New type - need to read and skip the TypeDef bytes
       long id = buffer.readInt64();
       typeInfo = extRegistry.typeInfoByTypeDefId.get(id);
       if (typeInfo != null) {

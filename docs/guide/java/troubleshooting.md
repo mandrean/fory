@@ -174,6 +174,16 @@ Fory fory = Fory.builder()
 - Use custom memory allocator for pooling
 - Consider row format for large datasets
 
+### Large Sorted Container Deserialization
+
+**Cause**: `TreeSet` and `TreeMap` deserialization may use temporary `Object[]` buffers before handing the data to the JDK bulk-build fast path. This improves CPU for many sorted-container workloads, but it also increases peak heap usage while reading.
+
+**Solutions**:
+
+- Lower `withSortedContainerBulkReadBufferLimitBytes(...)` to reduce temporary heap usage.
+- Set `withSortedContainerBulkReadBufferLimitBytes(0)` to disable sorted-container bulk buffering entirely.
+- Raise the limit only when you have enough headroom and want to trade memory for faster `TreeSet` or `TreeMap` deserialization.
+
 ### Large Serialized Size
 
 **Cause**: Metadata overhead or uncompressed data.

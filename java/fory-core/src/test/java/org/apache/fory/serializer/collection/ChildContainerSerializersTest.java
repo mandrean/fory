@@ -31,6 +31,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -52,6 +53,7 @@ import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import org.apache.fory.Fory;
 import org.apache.fory.ForyTestBase;
+import org.apache.fory.builder.Generated;
 import org.apache.fory.config.CompatibleMode;
 import org.apache.fory.config.Language;
 import org.apache.fory.serializer.Serializer;
@@ -254,6 +256,176 @@ public class ChildContainerSerializersTest extends ForyTestBase {
       map.putAll(data);
       copyCheck(fory, map);
     }
+  }
+
+  private static final class ReverseLengthComparator implements Comparator<String>, Serializable {
+    @Override
+    public int compare(String left, String right) {
+      int delta = right.length() - left.length();
+      return delta != 0 ? delta : right.compareTo(left);
+    }
+  }
+
+  public static class ChildStringTreeSet extends TreeSet<String> {
+    private int state;
+
+    public ChildStringTreeSet() {}
+
+    public ChildStringTreeSet(Comparator<? super String> comparator) {
+      super(comparator);
+    }
+
+    public ChildStringTreeSet(SortedSet<String> values) {
+      super(values);
+    }
+  }
+
+  public static class ChildStringTreeMap extends TreeMap<String, String> {
+    private int state;
+
+    public ChildStringTreeMap() {}
+
+    public ChildStringTreeMap(Comparator<? super String> comparator) {
+      super(comparator);
+    }
+
+    public ChildStringTreeMap(SortedMap<String, String> values) {
+      super(values);
+    }
+  }
+
+  public static class DescendingIterationChildTreeSet extends TreeSet<String> {
+    private int state;
+
+    @Override
+    public Iterator<String> iterator() {
+      return descendingIterator();
+    }
+  }
+
+  public static class DescendingEntrySetChildTreeMap extends TreeMap<String, String> {
+    private int state;
+
+    @Override
+    public java.util.Set<Map.Entry<String, String>> entrySet() {
+      return descendingMap().entrySet();
+    }
+  }
+
+  @Data
+  @NoArgsConstructor
+  @AllArgsConstructor
+  public static class SortedChildHolder {
+    private ChildStringTreeSet set;
+    private ChildStringTreeMap map;
+  }
+
+  @Test(dataProvider = "enableCodegen")
+  public void testChildSortedContainers(boolean enableCodegen) {
+    Fory fory =
+        builder()
+            .withCodegen(enableCodegen)
+            .withAsyncCompilation(false)
+            .withRefTracking(false)
+            .requireClassRegistration(false)
+            .build();
+
+    ChildStringTreeSet set = new ChildStringTreeSet(new ReverseLengthComparator());
+    set.add("bbb");
+    set.add("a");
+    set.add("cc");
+    set.state = 7;
+
+    ChildStringTreeMap map = new ChildStringTreeMap(new ReverseLengthComparator());
+    map.put("bbb", "3");
+    map.put("a", "1");
+    map.put("cc", "2");
+    map.state = 9;
+
+    ChildStringTreeSet newSet = serDe(fory, set);
+    ChildStringTreeMap newMap = serDe(fory, map);
+
+    Assert.assertEquals(newSet, set);
+    Assert.assertEquals(newSet.state, set.state);
+    Assert.assertEquals(newSet.comparator().getClass(), set.comparator().getClass());
+    Assert.assertEquals(newMap, map);
+    Assert.assertEquals(newMap.state, map.state);
+    Assert.assertEquals(newMap.comparator().getClass(), map.comparator().getClass());
+    Assert.assertEquals(
+        fory.getTypeResolver().getSerializer(ChildStringTreeSet.class).getClass(),
+        ChildContainerSerializers.ChildSortedSetSerializer.class);
+    Assert.assertEquals(
+        fory.getTypeResolver().getSerializer(ChildStringTreeMap.class).getClass(),
+        ChildContainerSerializers.ChildSortedMapSerializer.class);
+  }
+
+  @Test(dataProvider = "enableCodegen")
+  public void testChildSortedContainersFallbackOnUnsafeIteration(boolean enableCodegen) {
+    Fory fory =
+        builder()
+            .withCodegen(enableCodegen)
+            .withAsyncCompilation(false)
+            .withRefTracking(false)
+            .requireClassRegistration(false)
+            .build();
+
+    DescendingIterationChildTreeSet set = new DescendingIterationChildTreeSet();
+    set.add("a");
+    set.add("b");
+    set.add("c");
+    set.state = 11;
+
+    DescendingEntrySetChildTreeMap map = new DescendingEntrySetChildTreeMap();
+    map.put("a", "1");
+    map.put("b", "2");
+    map.put("c", "3");
+    map.state = 13;
+
+    DescendingIterationChildTreeSet newSet = serDe(fory, set);
+    DescendingEntrySetChildTreeMap newMap = serDe(fory, map);
+
+    Assert.assertEquals(newSet.getClass(), DescendingIterationChildTreeSet.class);
+    Assert.assertEquals(newSet, set);
+    Assert.assertEquals(newSet.state, set.state);
+    Assert.assertEquals(newMap.getClass(), DescendingEntrySetChildTreeMap.class);
+    Assert.assertEquals(newMap, map);
+    Assert.assertEquals(newMap.state, map.state);
+    Assert.assertEquals(
+        fory.getTypeResolver().getSerializer(DescendingIterationChildTreeSet.class).getClass(),
+        ChildContainerSerializers.ChildSortedSetSerializer.class);
+    Assert.assertEquals(
+        fory.getTypeResolver().getSerializer(DescendingEntrySetChildTreeMap.class).getClass(),
+        ChildContainerSerializers.ChildSortedMapSerializer.class);
+  }
+
+  @Test(timeOut = 60_000)
+  public void testChildSortedContainersAsyncCompilation() throws InterruptedException {
+    Fory fory =
+        builder()
+            .withCodegen(true)
+            .withAsyncCompilation(true)
+            .withRefTracking(false)
+            .requireClassRegistration(false)
+            .build();
+
+    ChildStringTreeSet set = new ChildStringTreeSet(new ReverseLengthComparator());
+    set.add("bbb");
+    set.add("a");
+    set.add("cc");
+    set.state = 17;
+
+    ChildStringTreeMap map = new ChildStringTreeMap(new ReverseLengthComparator());
+    map.put("bbb", "3");
+    map.put("a", "1");
+    map.put("cc", "2");
+    map.state = 19;
+
+    SortedChildHolder holder = new SortedChildHolder(set, map);
+    Assert.assertEquals(serDe(fory, holder), holder);
+    while (!(getSerializer(fory, SortedChildHolder.class) instanceof Generated)) {
+      Thread.sleep(100);
+    }
+    Assert.assertEquals(serDe(fory, holder), holder);
   }
 
   private static class CustomMap extends HashMap<String, String> {}
@@ -697,6 +869,46 @@ public class ChildContainerSerializersTest extends ForyTestBase {
   public static class ChildTreeMapSortedMapCtor extends StatefulTreeMap {
     public ChildTreeMapSortedMapCtor(SortedMap<String, ? extends String> values) {
       super(values);
+    }
+  }
+
+  public static class ChildTreeSetAddOverride extends ChildTreeSetNoArg {
+    private int addCalls;
+
+    @Override
+    public boolean add(String value) {
+      addCalls++;
+      return super.add(value);
+    }
+  }
+
+  public static class ChildTreeSetAddAllOverride extends ChildTreeSetNoArg {
+    private int addAllCalls;
+
+    @Override
+    public boolean addAll(Collection<? extends String> values) {
+      addAllCalls++;
+      return super.addAll(values);
+    }
+  }
+
+  public static class ChildTreeMapPutOverride extends ChildTreeMapNoArg {
+    private int putCalls;
+
+    @Override
+    public String put(String key, String value) {
+      putCalls++;
+      return super.put(key, value);
+    }
+  }
+
+  public static class ChildTreeMapPutAllOverride extends ChildTreeMapNoArg {
+    private int putAllCalls;
+
+    @Override
+    public void putAll(Map<? extends String, ? extends String> values) {
+      putAllCalls++;
+      super.putAll(values);
     }
   }
 
@@ -1180,6 +1392,98 @@ public class ChildContainerSerializersTest extends ForyTestBase {
         ChildContainerSerializers.ChildSortedMapSerializer.class);
   }
 
+  @Test
+  public void testChildSortedSetSubclassWithAddOverrideFallsBackToIncrementalRead() {
+    Fory fory =
+        builder()
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .withCodegen(false)
+            .withAsyncCompilation(false)
+            .build();
+
+    ChildTreeSetAddOverride documents = new ChildTreeSetAddOverride();
+    documents.add("b");
+    documents.add("a");
+    documents.add("c");
+    Assert.assertEquals(documents.addCalls, 3);
+    Assert.assertEquals(
+        fory.getTypeResolver().getSerializer(documents.getClass()).getClass(),
+        ChildContainerSerializers.ChildSortedSetSerializer.class);
+
+    ChildTreeSetAddOverride deserialized = serDe(fory, documents);
+    Assert.assertEquals(deserialized, documents);
+    Assert.assertEquals(deserialized.addCalls, 6);
+  }
+
+  @Test
+  public void testChildSortedSetSubclassWithAddAllOverrideAvoidsBulkRead() {
+    Fory fory =
+        builder()
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .withCodegen(false)
+            .withAsyncCompilation(false)
+            .build();
+
+    ChildTreeSetAddAllOverride documents = new ChildTreeSetAddAllOverride();
+    documents.add("b");
+    documents.add("a");
+    documents.add("c");
+    Assert.assertEquals(documents.addAllCalls, 0);
+    Assert.assertEquals(
+        fory.getTypeResolver().getSerializer(documents.getClass()).getClass(),
+        ChildContainerSerializers.ChildSortedSetSerializer.class);
+
+    ChildTreeSetAddAllOverride deserialized = serDe(fory, documents);
+    Assert.assertEquals(deserialized, documents);
+    Assert.assertEquals(deserialized.addAllCalls, 0);
+  }
+
+  @Test
+  public void testChildSortedMapSubclassWithPutOverrideFallsBackToIncrementalRead() {
+    Fory fory =
+        builder()
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .withCodegen(false)
+            .withAsyncCompilation(false)
+            .build();
+
+    ChildTreeMapPutOverride attributes = new ChildTreeMapPutOverride();
+    attributes.put("b", "B");
+    attributes.put("a", "A");
+    attributes.put("c", "C");
+    Assert.assertEquals(attributes.putCalls, 3);
+    Assert.assertEquals(
+        fory.getTypeResolver().getSerializer(attributes.getClass()).getClass(),
+        ChildContainerSerializers.ChildSortedMapSerializer.class);
+
+    ChildTreeMapPutOverride deserialized = serDe(fory, attributes);
+    Assert.assertEquals(deserialized, attributes);
+    Assert.assertEquals(deserialized.putCalls, 6);
+  }
+
+  @Test
+  public void testChildSortedMapSubclassWithPutAllOverrideAvoidsBulkRead() {
+    Fory fory =
+        builder()
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .withCodegen(false)
+            .withAsyncCompilation(false)
+            .build();
+
+    ChildTreeMapPutAllOverride attributes = new ChildTreeMapPutAllOverride();
+    attributes.put("b", "B");
+    attributes.put("a", "A");
+    attributes.put("c", "C");
+    Assert.assertEquals(attributes.putAllCalls, 0);
+    Assert.assertEquals(
+        fory.getTypeResolver().getSerializer(attributes.getClass()).getClass(),
+        ChildContainerSerializers.ChildSortedMapSerializer.class);
+
+    ChildTreeMapPutAllOverride deserialized = serDe(fory, attributes);
+    Assert.assertEquals(deserialized, attributes);
+    Assert.assertEquals(deserialized.putAllCalls, 0);
+  }
+
   private static <T extends SortedSet<String> & StateCarrier> void assertSortedSetAutoPath(
       Fory fory, T value, Class<? extends Serializer> serializerClass, boolean expectComparator) {
     Assert.assertEquals(
@@ -1272,5 +1576,14 @@ public class ChildContainerSerializersTest extends ForyTestBase {
     struct.list = list;
     ChildLinkedListElemListStruct struct1 = serDe(fory, struct);
     Assert.assertSame(struct1.list.get(0), struct1.list);
+  }
+
+  private static Serializer<?> getSerializer(Fory fory, Class<?> cls) {
+    try {
+      fory.getJITContext().lock();
+      return fory.getTypeResolver().getSerializer(cls);
+    } finally {
+      fory.getJITContext().unlock();
+    }
   }
 }

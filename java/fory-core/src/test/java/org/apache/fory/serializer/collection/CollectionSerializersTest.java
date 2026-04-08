@@ -335,6 +335,56 @@ public class CollectionSerializersTest extends ForyTestBase {
     }
   }
 
+  @Test
+  public void testSortedSetAccumulatorFallsBackForOutOfOrderInput() {
+    TreeSet<String> target = new TreeSet<>();
+    SortedSetAccumulator<String> builder = new SortedSetAccumulator<>(target, 3);
+    builder.add("b");
+    builder.add("a");
+    builder.add("c");
+
+    SortedSet<String> result = builder.build();
+    assertSame(result, target);
+    assertEquals(ImmutableList.copyOf(result), ImmutableList.of("a", "b", "c"));
+    Assert.assertTrue(result.contains("a"));
+    Assert.assertTrue(result.contains("b"));
+    Assert.assertTrue(result.contains("c"));
+  }
+
+  @Test
+  public void testSortedSetAccumulatorFallsBackForDuplicateInput() {
+    TreeSet<String> target = new TreeSet<>();
+    SortedSetAccumulator<String> builder = new SortedSetAccumulator<>(target, 3);
+    builder.add("a");
+    builder.add("a");
+    builder.add("b");
+
+    SortedSet<String> result = builder.build();
+    assertSame(result, target);
+    assertEquals(ImmutableList.copyOf(result), ImmutableList.of("a", "b"));
+    assertEquals(result.size(), 2);
+  }
+
+  @Test
+  public void testSortedSetAccumulatorRejectsInvalidSingletonNonComparableElement() {
+    TreeSet<Object> target = new TreeSet<>();
+    SortedSetAccumulator<Object> builder = new SortedSetAccumulator<>(target, 1);
+
+    Assert.expectThrows(ClassCastException.class, () -> builder.add(new Object()));
+    assertEquals(builder.size(), 0);
+    assertEquals(target.size(), 0);
+  }
+
+  @Test
+  public void testSortedSetAccumulatorRejectsInvalidSingletonNullElement() {
+    TreeSet<String> target = new TreeSet<>();
+    SortedSetAccumulator<String> builder = new SortedSetAccumulator<>(target, 1);
+
+    Assert.expectThrows(NullPointerException.class, () -> builder.add(null));
+    assertEquals(builder.size(), 0);
+    assertEquals(target.size(), 0);
+  }
+
   @Test(dataProvider = "referenceTrackingConfig")
   public void testTreeSetConstructorMatrix(boolean referenceTrackingConfig) {
     Fory fory =
