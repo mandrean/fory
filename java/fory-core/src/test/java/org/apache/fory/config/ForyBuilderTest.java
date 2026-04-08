@@ -102,4 +102,24 @@ public class ForyBuilderTest {
     assertFalse(explicitSchemaConsistentReverseOrder.getConfig().isCompatible());
     assertTrue(explicitSchemaConsistentReverseOrder.getConfig().checkClassVersion());
   }
+
+  @Test
+  public void testSortedContainerBulkReadBufferLimitBytes() {
+    Fory defaultFory = Fory.builder().build();
+    Fory tunedFory = Fory.builder().withSortedContainerBulkReadBufferLimitBytes(1024).build();
+    Config defaultConfig = defaultFory.getConfig();
+    Config tunedConfig = tunedFory.getConfig();
+
+    Assert.assertEquals(defaultConfig.sortedContainerBulkReadBufferLimitBytes(), 256 * 1024);
+    Assert.assertEquals(tunedConfig.sortedContainerBulkReadBufferLimitBytes(), 1024);
+    Assert.assertNotEquals(defaultConfig, tunedConfig);
+    Assert.assertNotEquals(defaultConfig.getConfigHash(), tunedConfig.getConfigHash());
+  }
+
+  @Test
+  public void testSortedContainerBulkReadBufferLimitBytesRejectsNegativeValue() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new ForyBuilder().withSortedContainerBulkReadBufferLimitBytes(-1));
+  }
 }
