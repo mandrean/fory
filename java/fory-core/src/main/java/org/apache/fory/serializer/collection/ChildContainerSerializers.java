@@ -227,12 +227,16 @@ public class ChildContainerSerializers {
     public static Set<Class<?>> superClasses = ofHashSet(TreeSet.class);
     private final ContainerConstructors.SortedSetFactory<T> constructorFactory;
     private final ChildCollectionSlots<T> childSlots;
+    private final int bulkReadBufferLimitBytes;
 
     public ChildSortedSetSerializer(TypeResolver typeResolver, Class<T> cls) {
-      super(typeResolver, cls, true);
+      // Keep generated parent-object codecs wire-compatible with interpreted holders while async
+      // JIT swaps in the holder serializer.
+      super(typeResolver, cls, false);
       constructorFactory = ContainerConstructors.sortedSetFactory(cls, TreeSet.class);
       constructorFactory.checkSupported();
       childSlots = new ChildCollectionSlots<>(typeResolver, superClasses, cls);
+      bulkReadBufferLimitBytes = config.sortedContainerBulkReadBufferLimitBytes();
     }
 
     @Override
@@ -254,7 +258,11 @@ public class ChildContainerSerializers {
       setNumElements(numElements);
       Comparator comparator = (Comparator) readContext.readRef();
       return childSlots.readCollection(
-          readContext, constructorFactory.newConstruction(comparator), readContext::reference);
+          readContext,
+          constructorFactory.newConstruction(comparator),
+          readContext::reference,
+          numElements,
+          bulkReadBufferLimitBytes);
     }
 
     @Override
@@ -424,12 +432,16 @@ public class ChildContainerSerializers {
     public static Set<Class<?>> superClasses = ofHashSet(TreeMap.class);
     private final ContainerConstructors.SortedMapFactory<T> constructorFactory;
     private final ChildMapSlots<T> childSlots;
+    private final int bulkReadBufferLimitBytes;
 
     public ChildSortedMapSerializer(TypeResolver typeResolver, Class<T> cls) {
-      super(typeResolver, cls, true);
+      // Keep generated parent-object codecs wire-compatible with interpreted holders while async
+      // JIT swaps in the holder serializer.
+      super(typeResolver, cls, false);
       constructorFactory = ContainerConstructors.sortedMapFactory(cls, TreeMap.class);
       constructorFactory.checkSupported();
       childSlots = new ChildMapSlots<>(typeResolver, superClasses, cls);
+      bulkReadBufferLimitBytes = config.sortedContainerBulkReadBufferLimitBytes();
     }
 
     @Override
@@ -447,10 +459,15 @@ public class ChildContainerSerializers {
     public Map newMap(ReadContext readContext) {
       assert !config.isXlang();
       MemoryBuffer buffer = readContext.getBuffer();
-      setNumElements(buffer.readVarUint32Small7());
+      int numElements = buffer.readVarUint32Small7();
+      setNumElements(numElements);
       Comparator comparator = (Comparator) readContext.readRef();
       return childSlots.readMap(
-          readContext, constructorFactory.newConstruction(comparator), readContext::reference);
+          readContext,
+          constructorFactory.newConstruction(comparator),
+          readContext::reference,
+          numElements,
+          bulkReadBufferLimitBytes);
     }
 
     @Override
@@ -557,8 +574,22 @@ public class ChildContainerSerializers {
         ReadContext readContext,
         ContainerConstructors.CollectionConstruction<T> construction,
         Consumer<T> registrar) {
+      return readCollection(readContext, construction, registrar, 0, 0);
+    }
+
+    private Collection readCollection(
+        ReadContext readContext,
+        ContainerConstructors.CollectionConstruction<T> construction,
+        Consumer<T> registrar,
+        int numElements,
+        int bulkReadBufferLimitBytes) {
       return ContainerTransfer.readCollection(
-          type, construction, registrar, target -> readInto(readContext, target));
+          type,
+          construction,
+          registrar,
+          target -> readInto(readContext, target),
+          numElements,
+          bulkReadBufferLimitBytes);
     }
 
     private T copyCollection(
@@ -609,8 +640,22 @@ public class ChildContainerSerializers {
         ReadContext readContext,
         ContainerConstructors.MapConstruction<T> construction,
         Consumer<T> registrar) {
+      return readMap(readContext, construction, registrar, 0, 0);
+    }
+
+    private Map readMap(
+        ReadContext readContext,
+        ContainerConstructors.MapConstruction<T> construction,
+        Consumer<T> registrar,
+        int numElements,
+        int bulkReadBufferLimitBytes) {
       return ContainerTransfer.readMap(
-          type, construction, registrar, target -> readInto(readContext, target));
+          type,
+          construction,
+          registrar,
+          target -> readInto(readContext, target),
+          numElements,
+          bulkReadBufferLimitBytes);
     }
 
     private T copyMap(
