@@ -179,6 +179,7 @@ public class CollectionSerializers {
 
   public static class SortedSetSerializer<T extends SortedSet> extends CollectionSerializer<T> {
     private final ContainerConstructors.SortedSetFactory<T> constructorFactory;
+    private final int bulkReadBufferLimitBytes;
 
     public SortedSetSerializer(TypeResolver typeResolver, Class<T> cls) {
       super(typeResolver, cls, true);
@@ -186,6 +187,7 @@ public class CollectionSerializers {
           ContainerConstructors.sortedSetFactory(
               cls, ContainerConstructors.getSortedSetRootType(cls));
       constructorFactory.checkSupported();
+      bulkReadBufferLimitBytes = config.sortedContainerBulkReadBufferLimitBytes();
     }
 
     @Override
@@ -211,7 +213,9 @@ public class CollectionSerializers {
           type,
           constructorFactory.newConstruction(comparator),
           readContext::reference,
-          collection -> {});
+          collection -> {},
+          numElements,
+          bulkReadBufferLimitBytes);
     }
 
     @Override

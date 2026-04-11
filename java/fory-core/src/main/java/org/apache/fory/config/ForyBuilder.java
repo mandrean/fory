@@ -94,6 +94,7 @@ public final class ForyBuilder {
   UnknownEnumValueStrategy unknownEnumValueStrategy = UnknownEnumValueStrategy.NOT_ALLOWED;
   boolean serializeEnumByName = false;
   Integer bufferSizeLimitBytes = -1;
+  int sortedContainerBulkReadBufferLimitBytes = 256 * 1024;
   MetaCompressor metaCompressor = new DeflaterMetaCompressor();
   int maxDepth = 50;
   float mapRefLoadFactor = 0.51f;
@@ -265,6 +266,27 @@ public final class ForyBuilder {
   public ForyBuilder withBufferSizeLimitBytes(int bufferSizeLimitBytes) {
     this.bufferSizeLimitBytes = bufferSizeLimitBytes;
     recordAction(b -> b.withBufferSizeLimitBytes(bufferSizeLimitBytes));
+    return this;
+  }
+
+  /**
+   * Sets the temporary buffer budget used by sorted-container bulk deserialization.
+   *
+   * <p>When deserializing {@link java.util.TreeSet} and {@link java.util.TreeMap}, Fory can buffer
+   * the incoming elements and hand them to the JDK bulk-build fast path. This usually reduces CPU
+   * time for small and medium sorted containers, but it also allocates temporary {@code Object[]}
+   * buffers while reading.
+   *
+   * <p>The default is 256 KiB. Set to {@code 0} to disable sorted-container bulk buffering
+   * entirely.
+   */
+  public ForyBuilder withSortedContainerBulkReadBufferLimitBytes(int limitBytes) {
+    Preconditions.checkArgument(
+        limitBytes >= 0,
+        "sortedContainerBulkReadBufferLimitBytes must be >= 0 but got %s",
+        limitBytes);
+    this.sortedContainerBulkReadBufferLimitBytes = limitBytes;
+    recordAction(b -> b.withSortedContainerBulkReadBufferLimitBytes(limitBytes));
     return this;
   }
 

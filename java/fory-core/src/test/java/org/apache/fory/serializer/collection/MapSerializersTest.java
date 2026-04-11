@@ -353,6 +353,57 @@ public class MapSerializersTest extends ForyTestBase {
   }
 
   @Test
+  public void testSortedMapAccumulatorFallsBackForOutOfOrderInput() {
+    TreeMap<String, Integer> target = new TreeMap<>();
+    SortedMapAccumulator<String, Integer> builder = new SortedMapAccumulator<>(target, 3);
+    builder.put("b", 2);
+    builder.put("a", 1);
+    builder.put("c", 3);
+
+    SortedMap<String, Integer> result = builder.build();
+    Assert.assertSame(result, target);
+    assertEquals(new ArrayList<>(result.keySet()), Arrays.asList("a", "b", "c"));
+    assertEquals(result.get("a"), Integer.valueOf(1));
+    assertEquals(result.get("b"), Integer.valueOf(2));
+    assertEquals(result.get("c"), Integer.valueOf(3));
+  }
+
+  @Test
+  public void testSortedMapAccumulatorFallsBackForDuplicateKeys() {
+    TreeMap<String, Integer> target = new TreeMap<>();
+    SortedMapAccumulator<String, Integer> builder = new SortedMapAccumulator<>(target, 3);
+    builder.put("a", 1);
+    builder.put("a", 2);
+    builder.put("b", 3);
+
+    SortedMap<String, Integer> result = builder.build();
+    Assert.assertSame(result, target);
+    assertEquals(new ArrayList<>(result.keySet()), Arrays.asList("a", "b"));
+    assertEquals(result.get("a"), Integer.valueOf(2));
+    assertEquals(result.get("b"), Integer.valueOf(3));
+  }
+
+  @Test
+  public void testSortedMapAccumulatorRejectsInvalidSingletonNonComparableKey() {
+    TreeMap<Object, Integer> target = new TreeMap<>();
+    SortedMapAccumulator<Object, Integer> builder = new SortedMapAccumulator<>(target, 1);
+
+    Assert.expectThrows(ClassCastException.class, () -> builder.put(new Object(), 1));
+    assertEquals(builder.size(), 0);
+    assertEquals(target.size(), 0);
+  }
+
+  @Test
+  public void testSortedMapAccumulatorRejectsInvalidSingletonNullKey() {
+    TreeMap<String, Integer> target = new TreeMap<>();
+    SortedMapAccumulator<String, Integer> builder = new SortedMapAccumulator<>(target, 1);
+
+    Assert.expectThrows(NullPointerException.class, () -> builder.put(null, 1));
+    assertEquals(builder.size(), 0);
+    assertEquals(target.size(), 0);
+  }
+
+  @Test
   public void testTreeMap() {
     boolean referenceTracking = true;
     Fory fory =
