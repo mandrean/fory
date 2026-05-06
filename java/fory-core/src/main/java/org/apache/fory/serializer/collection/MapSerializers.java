@@ -120,6 +120,7 @@ public class MapSerializers {
 
   public static class SortedMapSerializer<T extends SortedMap> extends MapSerializer<T> {
     private final ContainerConstructors.SortedMapFactory<T> constructorFactory;
+    private final int bulkReadBufferLimitBytes;
 
     public SortedMapSerializer(TypeResolver typeResolver, Class<T> cls) {
       super(typeResolver, cls, true);
@@ -127,6 +128,7 @@ public class MapSerializers {
           ContainerConstructors.sortedMapFactory(
               cls, ContainerConstructors.getSortedMapRootType(cls));
       constructorFactory.checkSupported();
+      bulkReadBufferLimitBytes = config.sortedContainerBulkReadBufferLimitBytes();
     }
 
     @Override
@@ -146,10 +148,16 @@ public class MapSerializers {
     public Map newMap(ReadContext readContext) {
       assert !config.isXlang();
       MemoryBuffer buffer = readContext.getBuffer();
-      setNumElements(readMapSize(buffer));
+      int numElements = readMapSize(buffer);
+      setNumElements(numElements);
       Comparator comparator = (Comparator) readContext.readRef();
       return ContainerTransfer.readMap(
-          type, constructorFactory.newConstruction(comparator), readContext::reference, map -> {});
+          type,
+          constructorFactory.newConstruction(comparator),
+          readContext::reference,
+          map -> {},
+          numElements,
+          bulkReadBufferLimitBytes);
     }
 
     @Override

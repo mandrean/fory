@@ -41,6 +41,7 @@ public class Main {
     EnsureSerializerExample.main(args);
     Benchmark.main(args);
     CollectionExample.main(args);
+    SortedContainerExample.main(args);
     ArrayExample.main(args);
     ExceptionExample.main(args);
     AbstractClassExample.main(args);
