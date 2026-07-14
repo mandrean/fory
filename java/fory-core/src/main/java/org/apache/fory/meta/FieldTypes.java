@@ -283,6 +283,8 @@ public class FieldTypes {
               getTypeParameter(genericType, 0)));
     } else if (MAP_TYPE.isSupertypeOf(genericType.getTypeRef())
         || (isXlang && resolver.isMap(rawType))) {
+      Tuple2<TypeRef<?>, TypeRef<?>> keyValueTypes =
+          TypeUtils.getMapKeyValueType(genericType.getTypeRef());
       return new MapFieldType(
           typeId,
           nullable,
@@ -290,11 +292,11 @@ public class FieldTypes {
           buildFieldType(
               resolver,
               null, // nested fields don't have Field reference
-              getTypeParameter(genericType, 0)),
+              resolver.buildGenericType(keyValueTypes.f0)),
           buildFieldType(
               resolver,
               null, // nested fields don't have Field reference
-              getTypeParameter(genericType, 1)));
+              resolver.buildGenericType(keyValueTypes.f1)));
     } else if (isUnionType || Union.class.isAssignableFrom(rawType)) {
       return new UnionFieldType(nullable, trackingRef);
     } else if (Types.isEnumType(typeId)) {

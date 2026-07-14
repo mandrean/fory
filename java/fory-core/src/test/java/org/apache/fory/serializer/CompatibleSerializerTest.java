@@ -23,6 +23,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -32,10 +33,12 @@ import lombok.Data;
 import org.apache.fory.Fory;
 import org.apache.fory.ForyTestBase;
 import org.apache.fory.TestUtils;
+import org.apache.fory.config.CompatibleMode;
 import org.apache.fory.config.Language;
 import org.apache.fory.context.ReadContext;
 import org.apache.fory.memory.MemoryBuffer;
 import org.apache.fory.memory.MemoryUtils;
+import org.apache.fory.serializer.collection.MapLikeSerializer;
 import org.apache.fory.serializer.collection.UnmodifiableSerializersTest;
 import org.apache.fory.test.bean.BeanA;
 import org.apache.fory.test.bean.BeanB;
@@ -46,12 +49,19 @@ import org.apache.fory.test.bean.Struct;
 import org.apache.fory.type.Types;
 import org.testng.Assert;
 import org.testng.annotations.Test;
+import repro.ForyBinaryCompatibilityRepro.Document;
+import repro.ForyBinaryCompatibilityRepro.StringMap;
 
 /**
  * Tests for compatible mode serialization using shared class metadata. These tests verify
  * forward/backward compatibility when using compatible mode with scoped meta share.
  */
 public class CompatibleSerializerTest extends ForyTestBase {
+  // Base64 encoding of the 163-byte payload written by Fory 1.2.0.
+  private static final String FORY_1_2_MAP_SUBCLASS_PAYLOAD =
+      "AP8eAC2AW+p54F0eMAIRxI+LgG30ro46FDQRx0TmPBNAULRPHYkfF3OjcKjCNmA2VAuhJAQWFRYV/yAC"
+          + "JGCtIq9XAkVwABHEj4uAcXSujjoUNBHHROY8E0BQtE8diR8Xc7KcUNN1gHgBAQQkYK0ir1cCRXAAEcSP"
+          + "i4BxdK6OOhQ0EcdE5jwTQFC0Tx2JHxdzspxQ03WAeCQBDGtleRR2YWx1ZQ==";
   private static final int CATALOG_SNAPSHOT_CLASS_ID = 4100;
   private static final int MOVIE_DOCUMENT_CLASS_ID = 4101;
   private static final int LEGACY_LABELS_CLASS_ID = 4102;
@@ -292,6 +302,26 @@ public class CompatibleSerializerTest extends ForyTestBase {
     Assert.assertEquals(decoded.batchId, "batch-1");
     Assert.assertEquals(decoded.movies.size(), 1);
     Assert.assertEquals(decoded.movies.get(0).id, "m-1");
+  }
+
+  @Test
+  public void testMapSubclassCompatibility() {
+    Fory fory =
+        Fory.builder()
+            .requireClassRegistration(false)
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .withLanguage(Language.JAVA)
+            .build();
+
+    byte[] oldBytes = Base64.getDecoder().decode(FORY_1_2_MAP_SUBCLASS_PAYLOAD);
+    Document oldDocument = fory.deserialize(oldBytes, Document.class);
+    Assert.assertEquals(oldDocument.values.get("key"), "value");
+    Assert.assertTrue(
+        fory.getTypeResolver().getRawSerializer(StringMap.class) instanceof MapLikeSerializer);
+
+    byte[] currentBytes = fory.serialize(oldDocument);
+    Document currentDocument = fory.deserialize(currentBytes, Document.class);
+    Assert.assertEquals(currentDocument.values.get("key"), "value");
   }
 
   @Test
