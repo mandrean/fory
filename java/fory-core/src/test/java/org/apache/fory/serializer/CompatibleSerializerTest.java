@@ -325,6 +325,24 @@ public class CompatibleSerializerTest extends ForyTestBase {
     Assert.assertEquals(currentDocument.values.get("key"), "value");
   }
 
+  @Test
+  public void testRecursiveMapSubclass() {
+    Fory fory =
+        Fory.builder()
+            .requireClassRegistration(false)
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .withLanguage(Language.JAVA)
+            .build();
+    RecursiveMapDocument document = new RecursiveMapDocument();
+    document.values = new RecursiveMap();
+    document.values.put("child", new RecursiveMap());
+
+    RecursiveMapDocument copy =
+        fory.deserialize(fory.serialize(document), RecursiveMapDocument.class);
+    Assert.assertTrue(copy.values.containsKey("child"));
+    Assert.assertTrue(copy.values.get("child").isEmpty());
+  }
+
   private static byte[] decodeHex(String hex) {
     byte[] bytes = new byte[hex.length() / 2];
     for (int i = 0; i < hex.length(); i += 2) {
@@ -466,6 +484,12 @@ public class CompatibleSerializerTest extends ForyTestBase {
 
   public static class NullableKeyLabelsV2 extends HashMap<String, String> {
     public NullableKeyLabelsV2() {}
+  }
+
+  public static class RecursiveMap extends HashMap<String, RecursiveMap> {}
+
+  public static class RecursiveMapDocument {
+    public RecursiveMap values;
   }
 
   public static class MovieDocumentV1 {

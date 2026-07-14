@@ -32,7 +32,9 @@ import java.io.Serializable;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Set;
 import org.apache.fory.collection.BFloat16List;
 import org.apache.fory.collection.BoolList;
 import org.apache.fory.collection.Float16List;
@@ -106,6 +108,14 @@ public class FieldTypes {
   /** Build field type from generics, nested generics will be extracted too. */
   private static FieldType buildFieldType(
       TypeResolver resolver, Descriptor descriptor, GenericType genericType) {
+    return buildFieldType(resolver, descriptor, genericType, null);
+  }
+
+  private static FieldType buildFieldType(
+      TypeResolver resolver,
+      Descriptor descriptor,
+      GenericType genericType,
+      Set<Class<?>> mapTypePath) {
     Preconditions.checkNotNull(genericType);
     Field field = descriptor == null ? null : descriptor.getField();
     Class<?> rawType = genericType.getCls();
@@ -280,23 +290,42 @@ public class FieldTypes {
           buildFieldType(
               resolver,
               null, // nested fields don't have Field reference
-              getTypeParameter(genericType, 0)));
+              getTypeParameter(genericType, 0),
+              mapTypePath));
     } else if (MAP_TYPE.isSupertypeOf(genericType.getTypeRef())
         || (isXlang && resolver.isMap(rawType))) {
+      Set<Class<?>> nestedMapTypePath = mapTypePath;
+      if (nestedMapTypePath == null) {
+        nestedMapTypePath = new HashSet<>();
+      }
+      boolean resolveInheritedTypes = nestedMapTypePath.add(rawType);
+      // Re-resolving inherited parameters would expand self-referential map subclasses forever.
       Tuple2<TypeRef<?>, TypeRef<?>> keyValueTypes =
-          TypeUtils.getMapKeyValueType(genericType.getTypeRef());
-      return new MapFieldType(
-          typeId,
-          nullable,
-          trackingRef,
-          buildFieldType(
-              resolver,
-              null, // nested fields don't have Field reference
-              resolver.buildGenericType(keyValueTypes.f0)),
-          buildFieldType(
-              resolver,
-              null, // nested fields don't have Field reference
-              resolver.buildGenericType(keyValueTypes.f1)));
+          resolveInheritedTypes
+              ? TypeUtils.getMapKeyValueType(genericType.getTypeRef())
+              : Tuple2.of(
+                  getTypeParameter(genericType, 0).getTypeRef(),
+                  getTypeParameter(genericType, 1).getTypeRef());
+      try {
+        return new MapFieldType(
+            typeId,
+            nullable,
+            trackingRef,
+            buildFieldType(
+                resolver,
+                null, // nested fields don't have Field reference
+                resolver.buildGenericType(keyValueTypes.f0),
+                nestedMapTypePath),
+            buildFieldType(
+                resolver,
+                null, // nested fields don't have Field reference
+                resolver.buildGenericType(keyValueTypes.f1),
+                nestedMapTypePath));
+      } finally {
+        if (resolveInheritedTypes) {
+          nestedMapTypePath.remove(rawType);
+        }
+      }
     } else if (isUnionType || Union.class.isAssignableFrom(rawType)) {
       return new UnionFieldType(nullable, trackingRef);
     } else if (Types.isEnumType(typeId)) {
@@ -320,7 +349,7 @@ public class FieldTypes {
               typeId,
               nullable,
               trackingRef,
-              buildFieldType(resolver, null, GenericType.build(elemType)));
+              buildFieldType(resolver, null, GenericType.build(elemType), mapTypePath));
         } else {
           // For native mode, use Java class IDs for arrays
           if (resolver.isRegisteredById(rawType)) {
@@ -331,7 +360,7 @@ public class FieldTypes {
               typeId,
               nullable,
               trackingRef,
-              buildFieldType(resolver, null, GenericType.build(arrayComponentInfo.f0)),
+              buildFieldType(resolver, null, GenericType.build(arrayComponentInfo.f0), mapTypePath),
               arrayComponentInfo.f1);
         }
       }
