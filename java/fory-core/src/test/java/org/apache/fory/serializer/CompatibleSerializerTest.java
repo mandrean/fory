@@ -23,7 +23,6 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -57,11 +56,13 @@ import repro.ForyBinaryCompatibilityRepro.StringMap;
  * forward/backward compatibility when using compatible mode with scoped meta share.
  */
 public class CompatibleSerializerTest extends ForyTestBase {
-  // Base64 encoding of the 163-byte payload written by Fory 1.2.0.
-  private static final String FORY_1_2_MAP_SUBCLASS_PAYLOAD =
-      "AP8eAC2AW+p54F0eMAIRxI+LgG30ro46FDQRx0TmPBNAULRPHYkfF3OjcKjCNmA2VAuhJAQWFRYV/yAC"
-          + "JGCtIq9XAkVwABHEj4uAcXSujjoUNBHHROY8E0BQtE8diR8Xc7KcUNN1gHgBAQQkYK0ir1cCRXAAEcSP"
-          + "i4BxdK6OOhQ0EcdE5jwTQFC0Tx2JHxdzspxQ03WAeCQBDGtleRR2YWx1ZQ==";
+  // See https://github.com/apache/fory/issues/3843.
+  // Hex encoding of the 163-byte payload written by Fory 1.2.0.
+  private static final String FORY_1_2_MAP_SUBCLASS_PAYLOAD_HEX =
+      "00ff1e002d805bea79e05d1e300211c48f8b806df4ae8e3a143411c744e63c134050b44f1d891f177"
+          + "3a370a8c2366036540ba1240416151615ff20022460ad22af570245700011c48f8b807174ae8e3a143"
+          + "411c744e63c134050b44f1d891f1773b29c50d37580780101042460ad22af570245700011c48f8b807"
+          + "174ae8e3a143411c744e63c134050b44f1d891f1773b29c50d375807824010c6b65791476616c7565";
   private static final int CATALOG_SNAPSHOT_CLASS_ID = 4100;
   private static final int MOVIE_DOCUMENT_CLASS_ID = 4101;
   private static final int LEGACY_LABELS_CLASS_ID = 4102;
@@ -313,7 +314,7 @@ public class CompatibleSerializerTest extends ForyTestBase {
             .withLanguage(Language.JAVA)
             .build();
 
-    byte[] oldBytes = Base64.getDecoder().decode(FORY_1_2_MAP_SUBCLASS_PAYLOAD);
+    byte[] oldBytes = decodeHex(FORY_1_2_MAP_SUBCLASS_PAYLOAD_HEX);
     Document oldDocument = fory.deserialize(oldBytes, Document.class);
     Assert.assertEquals(oldDocument.values.get("key"), "value");
     Assert.assertTrue(
@@ -322,6 +323,14 @@ public class CompatibleSerializerTest extends ForyTestBase {
     byte[] currentBytes = fory.serialize(oldDocument);
     Document currentDocument = fory.deserialize(currentBytes, Document.class);
     Assert.assertEquals(currentDocument.values.get("key"), "value");
+  }
+
+  private static byte[] decodeHex(String hex) {
+    byte[] bytes = new byte[hex.length() / 2];
+    for (int i = 0; i < hex.length(); i += 2) {
+      bytes[i / 2] = (byte) Integer.parseInt(hex.substring(i, i + 2), 16);
+    }
+    return bytes;
   }
 
   @Test
