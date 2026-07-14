@@ -32,10 +32,12 @@ import lombok.Data;
 import org.apache.fory.Fory;
 import org.apache.fory.ForyTestBase;
 import org.apache.fory.TestUtils;
+import org.apache.fory.config.CompatibleMode;
 import org.apache.fory.config.Language;
 import org.apache.fory.context.ReadContext;
 import org.apache.fory.memory.MemoryBuffer;
 import org.apache.fory.memory.MemoryUtils;
+import org.apache.fory.serializer.collection.MapLikeSerializer;
 import org.apache.fory.serializer.collection.UnmodifiableSerializersTest;
 import org.apache.fory.test.bean.BeanA;
 import org.apache.fory.test.bean.BeanB;
@@ -52,6 +54,14 @@ import org.testng.annotations.Test;
  * forward/backward compatibility when using compatible mode with scoped meta share.
  */
 public class CompatibleSerializerTest extends ForyTestBase {
+  // See https://github.com/apache/fory/issues/3843.
+  // Hex encoding of the 200-byte payload written by Fory 1.2.0.
+  private static final String FORY_1_2_MAP_SUBCLASS_PAYLOAD_HEX =
+      "00ff1e003ec03a392b329f10300245ba26d01e011c9a2ba38d489140168c92207df44e63c1340564ec"
+          + "89140168c923d99253e76538a1a6eb00fe8dc2a308d98036540ba1240416151615ff20022e30f622b2"
+          + "e61109700045ba26d01e011c9a2ba38d489140168c922065744e63c1340564ec89140168c923d99253"
+          + "e76538a1a6eb00f00101042e30f622b2e61109700045ba26d01e011c9a2ba38d489140168c92206574"
+          + "4e63c1340564ec89140168c923d99253e76538a1a6eb00f024010c6b65791476616c7565";
   private static final int CATALOG_SNAPSHOT_CLASS_ID = 4100;
   private static final int MOVIE_DOCUMENT_CLASS_ID = 4101;
   private static final int LEGACY_LABELS_CLASS_ID = 4102;
@@ -295,6 +305,52 @@ public class CompatibleSerializerTest extends ForyTestBase {
   }
 
   @Test
+  public void testMapSubclassCompatibility() {
+    Fory fory =
+        Fory.builder()
+            .requireClassRegistration(false)
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .withLanguage(Language.JAVA)
+            .build();
+
+    byte[] oldBytes = decodeHex(FORY_1_2_MAP_SUBCLASS_PAYLOAD_HEX);
+    StringMapDocument oldDocument = fory.deserialize(oldBytes, StringMapDocument.class);
+    Assert.assertEquals(oldDocument.values.get("key"), "value");
+    Assert.assertTrue(
+        fory.getTypeResolver().getRawSerializer(StringMap.class) instanceof MapLikeSerializer);
+
+    byte[] currentBytes = fory.serialize(oldDocument);
+    StringMapDocument currentDocument = fory.deserialize(currentBytes, StringMapDocument.class);
+    Assert.assertEquals(currentDocument.values.get("key"), "value");
+  }
+
+  @Test
+  public void testRecursiveMapSubclass() {
+    Fory fory =
+        Fory.builder()
+            .requireClassRegistration(false)
+            .withCompatibleMode(CompatibleMode.COMPATIBLE)
+            .withLanguage(Language.JAVA)
+            .build();
+    RecursiveMapDocument document = new RecursiveMapDocument();
+    document.values = new RecursiveMap();
+    document.values.put("child", new RecursiveMap());
+
+    RecursiveMapDocument copy =
+        fory.deserialize(fory.serialize(document), RecursiveMapDocument.class);
+    Assert.assertTrue(copy.values.containsKey("child"));
+    Assert.assertTrue(copy.values.get("child").isEmpty());
+  }
+
+  private static byte[] decodeHex(String hex) {
+    byte[] bytes = new byte[hex.length() / 2];
+    for (int i = 0; i < hex.length(); i += 2) {
+      bytes[i / 2] = (byte) Integer.parseInt(hex.substring(i, i + 2), 16);
+    }
+    return bytes;
+  }
+
+  @Test
   public void testWriteCompatibleMap() throws Exception {
     Fory fory =
         Fory.builder()
@@ -427,6 +483,18 @@ public class CompatibleSerializerTest extends ForyTestBase {
 
   public static class NullableKeyLabelsV2 extends HashMap<String, String> {
     public NullableKeyLabelsV2() {}
+  }
+
+  public static class StringMap extends HashMap<String, String> {}
+
+  public static class RecursiveMap extends HashMap<String, RecursiveMap> {}
+
+  public static class StringMapDocument {
+    public StringMap values;
+  }
+
+  public static class RecursiveMapDocument {
+    public RecursiveMap values;
   }
 
   public static class MovieDocumentV1 {
